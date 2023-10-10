@@ -2,6 +2,7 @@
 #include "hal.h"
 
 #include "LEDs.hpp"
+#include "PowerManagement.hpp"
 
 using namespace GoodBot;
 
@@ -33,6 +34,10 @@ int main(void)
     chSysInit();
 
     InitializeLEDs();
+    InitializePowerManagement();
+
+    chThdSleepMilliseconds(10000);
+    SetMainPower(true);
 
     chThdCreateStatic(waThread1, sizeof(waThread1), NORMALPRIO, Thread1, NULL);
 
