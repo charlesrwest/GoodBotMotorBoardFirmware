@@ -1,0 +1,13 @@
+Simple speed estimation:
+Measure number of position changes to make a circle to get distance between steps.  Setup interrupt that triggers when position change, getting direction based on which pattern sequence change occurred.  Divide the distance change by the time between the changes to get speed.  Speed estimate stays the same at next update.
+
+Pros:
+Extremely computationally efficient, extremely accurate at high speeds and/or low accelerations relative to speed.
+
+Cons:
+Requires use of pin triggered interrupts, gives extremely poor estimates when accelerations are large relative to speed or speed is low.
+
+Busy wait speed estimation:
+A thread runs at somewhere between 1-10 kilohertz and constantly polls the hall effect sensor pins to get their current state.  The speed estimate for each motor is updated at each iteration based on how long its been since last update.  Once the time since the last update is longer than expected, the estimated speed starts getting reduced accordingly.
+
+
