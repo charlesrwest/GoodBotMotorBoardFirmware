@@ -125,7 +125,7 @@
 /*
  * ADC driver system settings.
  */
-#define STM32_ADC_USE_ADC1                  FALSE
+#define STM32_ADC_USE_ADC1                  TRUE
 #define STM32_ADC_ADC1_CFGR2                ADC_CFGR2_CKMODE_ADCCLK
 #define STM32_ADC_ADC1_DMA_PRIORITY         2
 #define STM32_ADC_ADC1_DMA_IRQ_PRIORITY     2
@@ -194,7 +194,7 @@
 #define STM32_PWM_USE_TIM2                  FALSE
 #define STM32_PWM_USE_TIM3                  FALSE
 #define STM32_PWM_USE_TIM4                  FALSE
-#define STM32_PWM_USE_TIM14                 FALSE
+#define STM32_PWM_USE_TIM14                 TRUE
 #define STM32_PWM_USE_TIM15                 FALSE
 #define STM32_PWM_USE_TIM16                 FALSE
 #define STM32_PWM_USE_TIM17                 FALSE

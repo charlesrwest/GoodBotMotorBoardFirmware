@@ -73,7 +73,7 @@ Motor 3: PF7, PE7, PE8
 
 class MotorsPWMManagerClass
 {
-    static const int Manager_PWM_FREQUENCY = 100000; //Hertz
+    static const int Manager_PWM_FREQUENCY = 80000; //Hertz
     static const int HundredthsOfMicroSecondsPerSecond = 100000000;
     static const int PWM_Period_Number = HundredthsOfMicroSecondsPerSecond/Manager_PWM_FREQUENCY; 
 

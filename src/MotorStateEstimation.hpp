@@ -90,7 +90,7 @@ void UpdateHallStates()
             Hall_Pin_States[motor_index][pin_index] = palReadPad(pin_info.first, pin_info.second);
         }
         
-        auto time = chVTGetSystemTime();
+        auto time = chVTGetSystemTimeX();
         LastUpdateTime[motor_index] = time;
         
         if(Hall_Pin_States[motor_index] != Last_Hall_Pin_States[motor_index])
