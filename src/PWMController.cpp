@@ -5,8 +5,10 @@ using namespace GoodBot;
 
 PWMController::PWMController(Timer inputTimerToClaim, uint32_t inputPeriodInMicroseconds) : periodInMicroseconds(inputPeriodInMicroseconds), driver(&GetDriver(inputTimerToClaim))
 {
+#if STM32_PWM_USE_TIM14
     if((inputTimerToClaim != Timer::TIMER14))
     {
+#endif
         config = {
    DEFAULT_PWM_TIMER_FREQUENCY,
    inputPeriodInMicroseconds,
@@ -22,9 +24,11 @@ PWMController::PWMController(Timer inputTimerToClaim, uint32_t inputPeriodInMicr
    0
     };
         pwmStart(driver, &config);
+#if STM32_PWM_USE_TIM14
     }
     else
     {
+#endif
         config = {
    DEFAULT_PWM_TIMER_FREQUENCY,
    inputPeriodInMicroseconds,
@@ -37,7 +41,9 @@ PWMController::PWMController(Timer inputTimerToClaim, uint32_t inputPeriodInMicr
    0
     };
         pwmStart(driver, &config);
+#if STM32_PWM_USE_TIM14
     }
+#endif
 //chprintf((BaseSequentialStream*)&SD1, "Started pwm driver\r\n");
 }
 
@@ -93,16 +99,16 @@ return PWMD1;
 break;
 #endif
 
-#if STM32_PWM_USE_TIM2
-//case Timer::TIMER2:
-//return PWMD2;
-//break;
+#if STM32_PWM_USE_TIM3
+case Timer::TIMER3:
+return PWMD3;
+break;
 #endif
 
-#if STM32_PWM_USE_TIM3
-//case Timer::TIMER3:
-//return PWMD3;
-//break;
+#if STM32_PWM_USE_TIM4
+case Timer::TIMER4:
+return PWMD4;
+break;
 #endif
 
 #if STM32_PWM_USE_TIM14
@@ -114,10 +120,12 @@ break;
 default:
 #if STM32_PWM_USE_TIM1
 return PWMD1;
-#elif STM32_PWM_USE_TIM2
-//return PWMD2;
 #elif STM32_PWM_USE_TIM3
-//return PWMD3;
+return PWMD3;
+#elif STM32_PWM_USE_TIM4
+return PWMD4;
+#elif STM32_PWM_USE_TIM14
+return PWMD14;
 #endif
 }
 }

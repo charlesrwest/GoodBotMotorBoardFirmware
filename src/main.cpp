@@ -302,7 +302,7 @@ int main(void)
     adcgrpcfg1.error_cb = adcerrorcallback;
     adcgrpcfg1.cfgr1 = ADC_CFGR1_CONT | ADC_CFGR1_RES_12BIT;
     adcgrpcfg1.tr1 = ADC_TR(0, 0);
-    adcgrpcfg1.smpr = ADC_SMPR_SMP_160P5;
+    adcgrpcfg1.smpr = ADC_SMPR_SMP1_160P5;
     adcgrpcfg1.chselr = ADC_CHSELR_CHSEL2 | ADC_CHSELR_CHSEL1;
       
     
@@ -347,23 +347,23 @@ int main(void)
         for(int motor_index = 0; motor_index < (int) Hall_Pin_States.size(); motor_index++)
         {
             std::array<int, 3> state = {{Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]}};
-            //chprintf((BaseSequentialStream*)&SD1, "Motor state %d: %d %d %d\r\n", motor_index, state[0], state[1], state[2]);//MotorVelocityEstimateMilliRPM[2]);
+            chprintf((BaseSequentialStream*)&SD1, "Motor state %d: %d %d %d\r\n", motor_index, state[0], state[1], state[2]);//MotorVelocityEstimateMilliRPM[2]);
             //chprintf((BaseSequentialStream*)&SD1, "Motor State %d\r\n", MotorChangeHistory[2][0].ValidStateIndexCW);
             //chprintf((BaseSequentialStream*)&SD1, "Motor State %d\r\n", MotorChangeHistory[2][0].ValidStateIndexCW);
-            chprintf((BaseSequentialStream*)&SD1, "ADCs %d %d\r\n", Battery_Voltage_Average_ADC_Reading, Charger_Voltage_Average_ADC_Reading);
+            //chprintf((BaseSequentialStream*)&SD1, "ADCs %d %d\r\n", Battery_Voltage_Average_ADC_Reading, Charger_Voltage_Average_ADC_Reading);
         }
         //chprintf((BaseSequentialStream*)&SD1, "Motor velocity %d\r\n", MotorVelocityEstimateMilliRPM[2]/1000);
         
-        //SetBatteryChargerPower(0);
+        SetBatteryChargerPower(0);
         if(elapsed_time > 5000)
         {
             MotorSettings[2].DutyCycle = 0;
             MotorSettings[2].Mode = MotorMode::BRAKES_ON;
-            SetBatteryChargerPower(34);
+            //SetBatteryChargerPower(34);
         }
         else
         {
-            SetBatteryChargerPower(0);
+            //SetBatteryChargerPower(0);
             //MotorSettings[2].DutyCycle = elapsed_time/400;
             //MotorSettings[2].DutyCycle = 25;
         }
