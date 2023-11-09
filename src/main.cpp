@@ -13,7 +13,6 @@ using namespace GoodBot;
 /**
 TODO:
 1. Investigate setting input to pull up causing a crash.  See if reproducable in dev boards.
-2. Investigate strange spikes in estimated speed
 */
 
 void adcCalibrate(ADCDriver *adcp)
@@ -42,7 +41,7 @@ void adcCalibrate(ADCDriver *adcp)
     // uint8_t calibration_factor = adcreg->DR & 0x7F;  // Using ADC_DR as an example.
 }
 
-#define ADC_GRP1_NUM_CHANNELS   1
+#define ADC_GRP1_NUM_CHANNELS   2
 #define ADC_GRP1_BUF_DEPTH      256
 
 static adcsample_t samples1[ADC_GRP1_NUM_CHANNELS * ADC_GRP1_BUF_DEPTH];
@@ -85,45 +84,75 @@ Charging testing.
 3.8 A current at 40% duty cycle
 3.8 A current at 50% duty cycle
  
+13.30 volt start voltage
+15.46 voltage power supply
+.3 A current at 20% duty cycle
+1.05 A current at 30% duty cycle
+1.15 A current at 32% duty cycle
+1.35 A current at 34% duty cycle
+4.0 A current at 35% duty cycle
+ 
+11.18 volt start voltage (complete discharge followed by ~48 hours of inactivity).
+15.45 voltage power supply
+0.0 A current at 10% duty cycle
+0.0 A current at 15% duty cycle
+0.2 A current at 20% duty cycle
+0.65 A current at 25% duty cycle
+1.2 A current at 30% duty cycle
+1.45 A current at 32% duty cycle
+1.7 A current at 34% duty cycle
+4.5 A current at 35% duty cycle
+4.5 A current at 36% duty cycle
+
+ 
 Probably need to implement current monitoring, since the duty cycle/current relationship seems to be strongly non-linear.
 */
 
 
 /**
 TODO:
-Get data reading up and running on the Power In.  See if the connection is still good.
-Hook a lightbulb up the the battery connections and see how well driving it with PWM goes.
+Bypass the ADC diodes and see if the readings are still good. <- much better
+Check duty cycle vs current relationship with less charged battery.
+Determine pin for current draw monitoring -> PA5 looks good
+
 */
 
 volatile int32_t Battery_Voltage_Average_ADC_Reading = -1;
+volatile int32_t Charger_Voltage_Average_ADC_Reading = -1;
 static void adccallback(ADCDriver *adcp) 
 {
-    int64_t average = 0;
+    int64_t average1 = 0; // For PA1
+    int64_t average2 = 0; // For PA2
+
     if(adcIsBufferComplete(adcp)) 
     {
         //Second half of buffer is full
-        average = 0;
-        for(int16_t buffer_index = 128; buffer_index < 256; buffer_index++)
+        for(int16_t buffer_index = 128; buffer_index < 256; buffer_index+=2) 
         {
-            average += samples1[buffer_index];
+            average1 += samples1[buffer_index];
+            average2 += samples1[buffer_index+1];
         } 
-        average = average / 128;
+        average2 = average2 / 64;
+        average1 = average1 / 64;
     }
     else 
     {
         //First half of buffer is full
-        average = 0;
-        for(int16_t buffer_index = 0; buffer_index < 128; buffer_index++)
+        for(int16_t buffer_index = 0; buffer_index < 128; buffer_index+=2)
         {
-            average += samples1[buffer_index];
+            average1 += samples1[buffer_index];
+            average2 += samples1[buffer_index+1];
         } 
-        average = average / 128;
+        average2 = average2 / 64;
+        average1 = average1 / 64;
     }
 
-    Battery_Voltage_Average_ADC_Reading = average;
-    
+    Battery_Voltage_Average_ADC_Reading = average2;
+    Charger_Voltage_Average_ADC_Reading = average1;
+
     //Convert to hundreths of a volt
     Battery_Voltage_Average_ADC_Reading = (Battery_Voltage_Average_ADC_Reading*330)/4095;
+    Charger_Voltage_Average_ADC_Reading = (Charger_Voltage_Average_ADC_Reading*330)/4095;
 }
 
 static void adcerrorcallback(ADCDriver *adcp, adcerror_t err) 
@@ -274,9 +303,10 @@ int main(void)
     adcgrpcfg1.cfgr1 = ADC_CFGR1_CONT | ADC_CFGR1_RES_12BIT;
     adcgrpcfg1.tr1 = ADC_TR(0, 0);
     adcgrpcfg1.smpr = ADC_SMPR_SMP_160P5;
-    adcgrpcfg1.chselr = ADC_CHSELR_CHSEL2;
+    adcgrpcfg1.chselr = ADC_CHSELR_CHSEL2 | ADC_CHSELR_CHSEL1;
       
     
+    palSetPadMode(GPIOA, 1, PAL_MODE_INPUT_ANALOG);
     palSetPadMode(GPIOA, 2, PAL_MODE_INPUT_ANALOG);
     adcStart(&ADCD1, NULL);
     
@@ -320,20 +350,20 @@ int main(void)
             //chprintf((BaseSequentialStream*)&SD1, "Motor state %d: %d %d %d\r\n", motor_index, state[0], state[1], state[2]);//MotorVelocityEstimateMilliRPM[2]);
             //chprintf((BaseSequentialStream*)&SD1, "Motor State %d\r\n", MotorChangeHistory[2][0].ValidStateIndexCW);
             //chprintf((BaseSequentialStream*)&SD1, "Motor State %d\r\n", MotorChangeHistory[2][0].ValidStateIndexCW);
-            chprintf((BaseSequentialStream*)&SD1, "Battery ADC %d\r\n", Battery_Voltage_Average_ADC_Reading);
+            chprintf((BaseSequentialStream*)&SD1, "ADCs %d %d\r\n", Battery_Voltage_Average_ADC_Reading, Charger_Voltage_Average_ADC_Reading);
         }
         //chprintf((BaseSequentialStream*)&SD1, "Motor velocity %d\r\n", MotorVelocityEstimateMilliRPM[2]/1000);
         
-        SetBatteryChargerPower(0);
+        //SetBatteryChargerPower(0);
         if(elapsed_time > 5000)
         {
             MotorSettings[2].DutyCycle = 0;
             MotorSettings[2].Mode = MotorMode::BRAKES_ON;
-            //SetBatteryChargerPower(34);
+            SetBatteryChargerPower(34);
         }
         else
         {
-            //SetBatteryChargerPower(0);
+            SetBatteryChargerPower(0);
             //MotorSettings[2].DutyCycle = elapsed_time/400;
             //MotorSettings[2].DutyCycle = 25;
         }
