@@ -189,8 +189,8 @@ include $(RULESPATH)/rules.mk
 #Add rule to flash to board via st-link, sometimes have to run twice, always need to reset after to start program running
 flash:
 	make
-	st-flash --reset erase 
-	st-flash --reset write ./build/$(PROJECT).bin 0x08000000 --connect-under-reset
+	#st-flash --reset erase --connect-under-reset --freq=8
+	st-flash --reset --connect-under-reset --freq=100 write ./build/$(PROJECT).bin 0x08000000
 
 #Add rule to flash to board via built-in USB bootloader (need to have boot0 connected to VDD at boot to be able to use bootloader)
 dfu-flash:

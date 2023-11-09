@@ -263,7 +263,7 @@ static void callback_function(void *arg)
         //if(MotorHallStateChanged(motor_index) && motor_index == 2)
         if(motor_index == 2)
         {
-            UpdateMotorHalfBridges(motor_index, MotorSettings[motor_index].Mode, MotorSettings[motor_index].DutyCycle, Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]);
+            //UpdateMotorHalfBridges(motor_index, MotorSettings[motor_index].Mode, MotorSettings[motor_index].DutyCycle, Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]);
         }
     }
 }
@@ -334,15 +334,14 @@ int main(void)
     SetupMotorControllerPins();
 
 
-
     chThdCreateStatic(waThread1, sizeof(waThread1), NORMALPRIO, Thread1, NULL);
     chThdCreateStatic(MotorStateEstimatorThreadWorkingArea, sizeof(MotorStateEstimatorThreadWorkingArea), NORMALPRIO, MotorStateEstimatorThread, NULL);
 
     int elapsed_time = 0;
     while(true)
     {
-        chThdSleepMilliseconds(50);
-        elapsed_time += 50;
+        chThdSleepMilliseconds(500);
+        elapsed_time += 500;
         
         for(int motor_index = 0; motor_index < (int) Hall_Pin_States.size(); motor_index++)
         {
