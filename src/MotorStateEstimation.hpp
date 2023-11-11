@@ -83,7 +83,7 @@ void UpdateHallStates()
     for(int motor_index = 0; motor_index < (int) Hall_Pins.size(); motor_index++)
     {
         const auto& motor_pins = Hall_Pins[motor_index];
-        for(int pin_index = 0; pin_index < (int) Hall_Pins.size(); pin_index++)
+        for(int pin_index = 0; pin_index < (int) Hall_Pins[motor_index].size(); pin_index++)
         {
             const auto& pin_info = motor_pins[pin_index];
         
@@ -96,12 +96,18 @@ void UpdateHallStates()
         if(Hall_Pin_States[motor_index] != Last_Hall_Pin_States[motor_index])
         {
             //Updating motor change history, so move the old entry back one
-            MotorChangeHistory[motor_index][1] = MotorChangeHistory[motor_index][0];
-            MotorChangeHistory[motor_index][0].ValidStateIndexCW = HallStatesToValidIndex(Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]);
-            MotorChangeHistory[motor_index][0].EventTime = time;
+            int state_index = HallStatesToValidIndex(Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]);
             
-            LastChangeTime[motor_index] = time;
+            if((state_index >= 0) && (state_index < (int) BasicHallIndexToValidStateIndexCW.size()))
+            {
+                MotorChangeHistory[motor_index][1] = MotorChangeHistory[motor_index][0];
+                MotorChangeHistory[motor_index][0].ValidStateIndexCW = state_index;
+                MotorChangeHistory[motor_index][0].EventTime = time;
+            
+                LastChangeTime[motor_index] = time;
+            }
         }
+
     }
 }
 

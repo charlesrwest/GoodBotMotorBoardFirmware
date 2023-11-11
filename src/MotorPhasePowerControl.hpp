@@ -78,7 +78,7 @@ class MotorsPWMManagerClass
     static const int PWM_Period_Number = HundredthsOfMicroSecondsPerSecond/Manager_PWM_FREQUENCY; 
 
     public:
-    MotorsPWMManagerClass() : TimerPWMControllers({{{Timer::TIMER1, PWM_Period_Number}}})
+    MotorsPWMManagerClass() : TimerPWMControllers({{{Timer::TIMER1, PWM_Period_Number}, {Timer::TIMER3, PWM_Period_Number}, {Timer::TIMER4, PWM_Period_Number}}})
     {
     }
     
@@ -117,7 +117,7 @@ class MotorsPWMManagerClass
         TimerPWMControllers[en_timer_index_and_channel.first].SetDutyCycle(en_timer_index_and_channel.second, (uint32_t) duty_cycle_time);
     }
 
-    std::array<PWMController, 1> TimerPWMControllers;
+    std::array<PWMController, 3> TimerPWMControllers;
     protected:
     
 };

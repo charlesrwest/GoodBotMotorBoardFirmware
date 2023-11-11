@@ -220,8 +220,8 @@ static THD_FUNCTION(MotorStateEstimatorThread, arg)
   systime_t last_time = chVTGetSystemTime();
   
   //Test motor 2
-  MotorSettings[2].DutyCycle = 0;
-  MotorSettings[2].Mode = MotorMode::CCW;
+  MotorSettings[3].DutyCycle = 0;
+  MotorSettings[3].Mode = MotorMode::CCW;
   
   while(true)
   {
@@ -230,8 +230,7 @@ static THD_FUNCTION(MotorStateEstimatorThread, arg)
     
     for(int32_t motor_index = 0; motor_index < (int) Hall_Pin_States.size(); motor_index++)
     {
-        //if(MotorHallStateChanged(motor_index) && motor_index == 2)
-        if(motor_index == 2)
+        if(motor_index == 3)
         {
             UpdateMotorHalfBridges(motor_index, MotorSettings[motor_index].Mode, MotorSettings[motor_index].DutyCycle, Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]);
         }
@@ -260,11 +259,7 @@ static void callback_function(void *arg)
     UpdateVelocityEstimates();
     for(int32_t motor_index = 0; motor_index < (int) Hall_Pin_States.size(); motor_index++)
     {
-        //if(MotorHallStateChanged(motor_index) && motor_index == 2)
-        if(motor_index == 2)
-        {
-            //UpdateMotorHalfBridges(motor_index, MotorSettings[motor_index].Mode, MotorSettings[motor_index].DutyCycle, Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]);
-        }
+        UpdateMotorHalfBridges(motor_index, MotorSettings[motor_index].Mode, MotorSettings[motor_index].DutyCycle, Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]);
     }
 }
 
@@ -294,6 +289,22 @@ int main(void)
     palEnablePadEvent(GPIOB, 12, PAL_EVENT_MODE_BOTH_EDGES);
     palEnablePadEvent(GPIOB, 13, PAL_EVENT_MODE_BOTH_EDGES);
     palEnablePadEvent(GPIOB, 14, PAL_EVENT_MODE_BOTH_EDGES);
+    
+    palSetPadMode(GPIOC, 6,  PAL_MODE_INPUT_PULLUP);
+    palSetPadMode(GPIOC, 7,  PAL_MODE_INPUT_PULLUP);
+    palSetPadMode(GPIOD, 8,  PAL_MODE_INPUT_PULLUP);
+    
+    palEnablePadEvent(GPIOC, 6, PAL_EVENT_MODE_BOTH_EDGES);
+    palEnablePadEvent(GPIOC, 7, PAL_EVENT_MODE_BOTH_EDGES);
+    palEnablePadEvent(GPIOD, 8, PAL_EVENT_MODE_BOTH_EDGES);
+    
+    palSetPadMode(GPIOF, 7,  PAL_MODE_INPUT_PULLUP);
+    palSetPadMode(GPIOE, 7,  PAL_MODE_INPUT_PULLUP);
+    palSetPadMode(GPIOE, 8,  PAL_MODE_INPUT_PULLUP);
+    
+    palEnablePadEvent(GPIOF, 7, PAL_EVENT_MODE_BOTH_EDGES);
+    palEnablePadEvent(GPIOE, 7, PAL_EVENT_MODE_BOTH_EDGES);
+    palEnablePadEvent(GPIOE, 8, PAL_EVENT_MODE_BOTH_EDGES);
     
     //Setup ADC
     adcgrpcfg1.circular = true;
@@ -340,31 +351,34 @@ int main(void)
     int elapsed_time = 0;
     while(true)
     {
-        chThdSleepMilliseconds(500);
-        elapsed_time += 500;
+        chThdSleepMilliseconds(50);
+        elapsed_time += 50;
         
         for(int motor_index = 0; motor_index < (int) Hall_Pin_States.size(); motor_index++)
         {
             std::array<int, 3> state = {{Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]}};
+            if(motor_index == 3)
+            {
             chprintf((BaseSequentialStream*)&SD1, "Motor state %d: %d %d %d\r\n", motor_index, state[0], state[1], state[2]);//MotorVelocityEstimateMilliRPM[2]);
             //chprintf((BaseSequentialStream*)&SD1, "Motor State %d\r\n", MotorChangeHistory[2][0].ValidStateIndexCW);
             //chprintf((BaseSequentialStream*)&SD1, "Motor State %d\r\n", MotorChangeHistory[2][0].ValidStateIndexCW);
             //chprintf((BaseSequentialStream*)&SD1, "ADCs %d %d\r\n", Battery_Voltage_Average_ADC_Reading, Charger_Voltage_Average_ADC_Reading);
+            }
         }
         //chprintf((BaseSequentialStream*)&SD1, "Motor velocity %d\r\n", MotorVelocityEstimateMilliRPM[2]/1000);
         
         SetBatteryChargerPower(0);
         if(elapsed_time > 5000)
         {
-            MotorSettings[2].DutyCycle = 0;
-            MotorSettings[2].Mode = MotorMode::BRAKES_ON;
+            MotorSettings[3].DutyCycle = 0;
+            MotorSettings[3].Mode = MotorMode::BRAKES_ON;
             //SetBatteryChargerPower(34);
         }
         else
         {
             //SetBatteryChargerPower(0);
-            //MotorSettings[2].DutyCycle = elapsed_time/400;
-            //MotorSettings[2].DutyCycle = 25;
+            MotorSettings[3].DutyCycle = elapsed_time/400;
+            MotorSettings[3].DutyCycle = 25;
         }
 
         
