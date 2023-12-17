@@ -1,3 +1,6 @@
+#include <array>
+#include <algorithm>
+
 #include "ch.h"
 #include "hal.h"
 #include "chprintf.h"
@@ -7,6 +10,7 @@
 #include "PWMController.hpp"
 #include "MotorStateEstimation.hpp"
 #include "MotorPhasePowerControl.hpp"
+
 
 using namespace GoodBot;
 
@@ -211,6 +215,123 @@ bool MotorHallStateChanged(int motorIndex)
     return change_occurred;
 }
 
+std::array<int, 4> MotorVelocityTargetMilliRPM = {{0,0,0,0}};
+std::array<bool, 4> SpeedControlDisabled = {{true, true, true, true}};
+std::array<int, 4> LastPowerSettingScaled = {{0,0,0,0}};
+const int PowerFixedPointScalingFactor = 1000;
+
+void SetMotorTargetVelocity(int motorIndex, int TargetForwardVelocityMilliRPM)
+{
+    if((motorIndex < 0) || (motorIndex > MotorVelocityTargetMilliRPM.size()))
+    {
+        return;
+    }
+
+    int sign = 1;
+    if((motorIndex == 0) || (motorIndex == 3))
+    {
+        sign = -1;
+    }
+    else
+    {
+        sign = 1;
+    }
+    
+    MotorVelocityTargetMilliRPM[motorIndex] = sign*TargetForwardVelocityMilliRPM;
+    SpeedControlDisabled[motorIndex] = false;
+}
+
+void StopMotor(int motorIndex)
+{
+    if((motorIndex < 0) || (motorIndex > MotorVelocityTargetMilliRPM.size()))
+    {
+        return;
+    }
+    
+    DisableMotor(motorIndex);
+    SpeedControlDisabled[motorIndex] = true;
+    LastPowerSettingScaled[motorIndex] = 0;
+}
+
+/*
+void UpdateMotorPowerForTargetVelocity()
+{
+    for(int motor_index = 0; motor_index < MotorVelocityTargetMilliRPM.size(); motor_index++)
+    {
+        if(SpeedControlDisabled[motorIndex])
+        {
+            continue;
+        }
+        
+        int target_velocity = MotorVelocityTargetMilliRPM[motor_index];
+        
+        MotorMode mode = MotorMode::CCW;
+        if(target_velocity >= 0)
+        {
+            mode = MotorMode::CW;
+        }
+        
+        int current_velocity = MotorVelocityEstimateMilliRPM[motor_index];
+        
+        
+        int velocity_difference = target_velocity - current_velocity;
+        int power_increment = abs(velocity_difference/100);
+        
+    }
+
+    MotorMode
+    MotorVelocityTargetMilliRPM
+}
+*/
+
+int last_error = 0;
+int last_adjustment = 0;
+
+void ControlMotors(int32_t deltaTimeMilliseconds)
+{
+    const int fixed_scale = 10000;
+    const int max_speed = 230000; //200 rpm
+
+    const int use_break_threshold = 100000;
+
+    for (int motor_index = 0; motor_index < SpeedControlDisabled.size(); motor_index++)
+    {
+        if(SpeedControlDisabled[motor_index])
+        {
+            continue;
+        }
+        
+        int currentVelocity = MotorVelocityEstimateMilliRPM[motor_index];
+        int desiredVelocity = MotorVelocityTargetMilliRPM[motor_index];
+        int average_velocity_scale = abs(desiredVelocity);
+        int desired_velocity_scaling_factor = (average_velocity_scale*100)/max_speed;
+        int power_adjustment_constant = 16*desired_velocity_scaling_factor;
+    
+
+        int desired_change = desiredVelocity - currentVelocity;
+        last_error = desired_change;
+        int power_adjustment = desired_change*power_adjustment_constant*deltaTimeMilliseconds/fixed_scale;
+        last_adjustment = power_adjustment;
+
+        
+        int power_scaled = std::clamp<int>(power_adjustment+LastPowerSettingScaled[motor_index], -PowerFixedPointScalingFactor*FULL_POWER_SETTING, PowerFixedPointScalingFactor*FULL_POWER_SETTING); // Scale back to 0-100 range
+        
+        LastPowerSettingScaled[motor_index] = power_scaled;
+        int actual_power = abs(power_scaled/PowerFixedPointScalingFactor);
+        MotorMode mode = power_scaled > 0 ? MotorMode::CW : MotorMode::CCW;
+
+        if((abs(currentVelocity) > use_break_threshold) && ((currentVelocity < 0) != (desiredVelocity < 0)))
+        {
+            //Need to reverse direction but doing so while powered will cause a big voltage spike.  Use the brake to slow down and then apply power
+            DisableMotor(motor_index);
+        }
+        else
+        {
+            SetMotorPower(motor_index, mode, actual_power);
+        }
+    }
+}
+
 static THD_WORKING_AREA(MotorStateEstimatorThreadWorkingArea, 2048);
 static THD_FUNCTION(MotorStateEstimatorThread, arg)
 {
@@ -219,9 +340,11 @@ static THD_FUNCTION(MotorStateEstimatorThread, arg)
   
   systime_t last_time = chVTGetSystemTime();
   
-  //Test motor 2
-  MotorSettings[3].DutyCycle = 0;
-  MotorSettings[3].Mode = MotorMode::CCW;
+
+  for(int motor_index = 0; motor_index < MotorSettings.size(); motor_index++)
+  {
+    DisableMotor(motor_index);
+  }
   
   while(true)
   {
@@ -230,14 +353,11 @@ static THD_FUNCTION(MotorStateEstimatorThread, arg)
     
     for(int32_t motor_index = 0; motor_index < (int) Hall_Pin_States.size(); motor_index++)
     {
-        if(motor_index == 3)
-        {
             UpdateMotorHalfBridges(motor_index, MotorSettings[motor_index].Mode, MotorSettings[motor_index].DutyCycle, Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]);
-        }
     }
     
     //Update at 10 kilohertz
-    last_time = chThdSleepUntilWindowed(last_time, chTimeAddX(last_time, TIME_US2I(1000)));
+    last_time = chThdSleepUntilWindowed(last_time, chTimeAddX(last_time, TIME_US2I(100)));
   }
 }
 
@@ -263,6 +383,24 @@ static void callback_function(void *arg)
     }
 }
 
+
+
+// Call ControlMotors in a loop at 1000 Hz with desired velocities
+static THD_WORKING_AREA(MotorPIDThreadWorkingArea, 2048);
+static THD_FUNCTION(MotorPIDThread, arg)
+{
+  (void)arg;
+  chRegSetThreadName("MotorPIDThread");
+  
+  systime_t last_time = chVTGetSystemTime();
+  while(true)
+  {
+    ControlMotors(1);
+  
+    last_time = chThdSleepUntilWindowed(last_time, chTimeAddX(last_time, TIME_US2I(100)));
+  }
+}
+
 int main(void)
 {
     halInit();
@@ -278,6 +416,33 @@ int main(void)
     InitializePowerManagement();
     InitializeMotorStateEstimation();
     
+    //Motor 0: PF3, PF4, PF5
+    palSetPadCallback(GPIOF, 3, callback_function, (void*) 1); 
+    palSetPadCallback(GPIOF, 4, callback_function, (void*) 2);
+    palSetPadCallback(GPIOF, 5, callback_function, (void*) 3);
+    
+    palSetPadMode(GPIOF, 3,  PAL_MODE_INPUT_PULLUP);
+    palSetPadMode(GPIOF, 4,  PAL_MODE_INPUT_PULLUP);
+    palSetPadMode(GPIOF, 5,  PAL_MODE_INPUT_PULLUP);
+    
+    palEnablePadEvent(GPIOF, 3, PAL_EVENT_MODE_BOTH_EDGES);
+    palEnablePadEvent(GPIOF, 4, PAL_EVENT_MODE_BOTH_EDGES);
+    palEnablePadEvent(GPIOF, 5, PAL_EVENT_MODE_BOTH_EDGES);
+    
+    //Motor 1: PC6, PC7, PD8
+    palSetPadCallback(GPIOC, 6, callback_function, (void*) 1); 
+    palSetPadCallback(GPIOC, 7, callback_function, (void*) 2);
+    palSetPadCallback(GPIOD, 8, callback_function, (void*) 3);
+    
+    palSetPadMode(GPIOC, 6,  PAL_MODE_INPUT_PULLUP);
+    palSetPadMode(GPIOC, 7,  PAL_MODE_INPUT_PULLUP);
+    palSetPadMode(GPIOD, 8,  PAL_MODE_INPUT_PULLUP);
+    
+    palEnablePadEvent(GPIOC, 6, PAL_EVENT_MODE_BOTH_EDGES);
+    palEnablePadEvent(GPIOC, 7, PAL_EVENT_MODE_BOTH_EDGES);
+    palEnablePadEvent(GPIOD, 8, PAL_EVENT_MODE_BOTH_EDGES);
+    
+    //Motor 2: PB12, PB13, PB14
     palSetPadCallback(GPIOB, 12, callback_function, (void*) 1); 
     palSetPadCallback(GPIOB, 13, callback_function, (void*) 2);
     palSetPadCallback(GPIOB, 14, callback_function, (void*) 3);
@@ -290,13 +455,10 @@ int main(void)
     palEnablePadEvent(GPIOB, 13, PAL_EVENT_MODE_BOTH_EDGES);
     palEnablePadEvent(GPIOB, 14, PAL_EVENT_MODE_BOTH_EDGES);
     
-    palSetPadMode(GPIOC, 6,  PAL_MODE_INPUT_PULLUP);
-    palSetPadMode(GPIOC, 7,  PAL_MODE_INPUT_PULLUP);
-    palSetPadMode(GPIOD, 8,  PAL_MODE_INPUT_PULLUP);
-    
-    palEnablePadEvent(GPIOC, 6, PAL_EVENT_MODE_BOTH_EDGES);
-    palEnablePadEvent(GPIOC, 7, PAL_EVENT_MODE_BOTH_EDGES);
-    palEnablePadEvent(GPIOD, 8, PAL_EVENT_MODE_BOTH_EDGES);
+    //Motor 3: PF7, PE7, PE8
+    palSetPadCallback(GPIOF, 7, callback_function, (void*) 1); 
+    palSetPadCallback(GPIOE, 7, callback_function, (void*) 2);
+    palSetPadCallback(GPIOE, 8, callback_function, (void*) 3);
     
     palSetPadMode(GPIOF, 7,  PAL_MODE_INPUT_PULLUP);
     palSetPadMode(GPIOE, 7,  PAL_MODE_INPUT_PULLUP);
@@ -305,6 +467,8 @@ int main(void)
     palEnablePadEvent(GPIOF, 7, PAL_EVENT_MODE_BOTH_EDGES);
     palEnablePadEvent(GPIOE, 7, PAL_EVENT_MODE_BOTH_EDGES);
     palEnablePadEvent(GPIOE, 8, PAL_EVENT_MODE_BOTH_EDGES);
+    
+    
     
     //Setup ADC
     adcgrpcfg1.circular = true;
@@ -347,6 +511,7 @@ int main(void)
 
     chThdCreateStatic(waThread1, sizeof(waThread1), NORMALPRIO, Thread1, NULL);
     chThdCreateStatic(MotorStateEstimatorThreadWorkingArea, sizeof(MotorStateEstimatorThreadWorkingArea), NORMALPRIO, MotorStateEstimatorThread, NULL);
+    chThdCreateStatic(MotorPIDThreadWorkingArea, sizeof(MotorPIDThreadWorkingArea), NORMALPRIO, MotorPIDThread, NULL);
 
     int elapsed_time = 0;
     while(true)
@@ -359,7 +524,7 @@ int main(void)
             std::array<int, 3> state = {{Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]}};
             if(motor_index == 3)
             {
-            chprintf((BaseSequentialStream*)&SD1, "Motor state %d: %d %d %d\r\n", motor_index, state[0], state[1], state[2]);//MotorVelocityEstimateMilliRPM[2]);
+            //chprintf((BaseSequentialStream*)&SD1, "Motor state %d: %d %d %d\r\n", motor_index, state[0], state[1], state[2]);//MotorVelocityEstimateMilliRPM[2]);
             //chprintf((BaseSequentialStream*)&SD1, "Motor State %d\r\n", MotorChangeHistory[2][0].ValidStateIndexCW);
             //chprintf((BaseSequentialStream*)&SD1, "Motor State %d\r\n", MotorChangeHistory[2][0].ValidStateIndexCW);
             //chprintf((BaseSequentialStream*)&SD1, "ADCs %d %d\r\n", Battery_Voltage_Average_ADC_Reading, Charger_Voltage_Average_ADC_Reading);
@@ -368,18 +533,51 @@ int main(void)
         //chprintf((BaseSequentialStream*)&SD1, "Motor velocity %d\r\n", MotorVelocityEstimateMilliRPM[2]/1000);
         
         SetBatteryChargerPower(0);
-        if(elapsed_time > 5000)
-        {
-            MotorSettings[3].DutyCycle = 0;
-            MotorSettings[3].Mode = MotorMode::BRAKES_ON;
-            //SetBatteryChargerPower(34);
+        for(int motor_index = 0; motor_index < 1; motor_index++)//MotorSettings.size()
+        {   
+            if(elapsed_time < 20000)
+            {
+                SetMotorTargetVelocity(motor_index, 80000);
+                
+                //SetMotorPower(motor_index, MotorDirection::BACKWARD, FULL_POWER_SETTING/2);
+                chprintf((BaseSequentialStream*)&SD1, "Motor speed %d: %d %d %d %d\r\n", motor_index, MotorVelocityEstimateMilliRPM[motor_index], LastPowerSettingScaled[motor_index]/PowerFixedPointScalingFactor, last_error, last_adjustment);
+                //StopMotor(motor_index);
+                //DisableMotor(motor_index);
+            }
+            else if(elapsed_time < 40000)
+            {
+                SetMotorTargetVelocity(motor_index, -12000);
+                chprintf((BaseSequentialStream*)&SD1, "Motor speed %d: %d %d %d %d\r\n", motor_index, MotorVelocityEstimateMilliRPM[motor_index], LastPowerSettingScaled[motor_index]/PowerFixedPointScalingFactor, last_error, last_adjustment);
+            }
+            else if(elapsed_time < 60000)
+            {
+                StopMotor(motor_index);
+                SetMotorPower(motor_index, MotorDirection::BACKWARD, FULL_POWER_SETTING/2);
+                chprintf((BaseSequentialStream*)&SD1, "Motor speed %d: %d %d %d %d\r\n", motor_index, MotorVelocityEstimateMilliRPM[motor_index], LastPowerSettingScaled[motor_index]/PowerFixedPointScalingFactor, last_error, last_adjustment);
+            }
+            else
+            {
+                StopMotor(motor_index);
+                //SetMotorPower(motor_index, MotorMode::DISABLED, 0);
+                chprintf((BaseSequentialStream*)&SD1, "Motor speed %d: %d\r\n", motor_index, MotorVelocityEstimateMilliRPM[motor_index]);
+                DisableMotor(motor_index);
+            }
         }
-        else
+        
+        /*
+        int active_motor_index = elapsed_time / 5000;
+        for(int motor_index = 0; motor_index < MotorSettings.size(); motor_index++)
         {
-            //SetBatteryChargerPower(0);
-            MotorSettings[3].DutyCycle = elapsed_time/400;
-            MotorSettings[3].DutyCycle = 25;
+            if(motor_index == active_motor_index)
+            {
+                SetMotorPower(motor_index, MotorMode::CW, 30);
+            }
+            else
+            {
+                DisableMotor(motor_index);
+            }
         }
+        */
 
         
         //chnWrite(&SD1, (uint8_t*) hello_world_string, 14);

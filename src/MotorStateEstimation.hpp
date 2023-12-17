@@ -184,7 +184,7 @@ void UpdateVelocityEstimates()
     {
         int event_based_estimate = GetMotorVelocityMilliRPM(MotorChangeHistory[motor_index][1], MotorChangeHistory[motor_index][0]);
         
-        if(MotorVelocityEventEstimateMilliRPM[motor_index] != event_based_estimate)
+        if((MotorVelocityEventEstimateMilliRPM[motor_index] != event_based_estimate) && (event_based_estimate != 0)) //We really shouldn't be getting the same event twice
         {
             //An event happened, so update all estimates based on actual data we just got
             LastMotorVelocityEventEstimateMilliRPM[motor_index] = MotorVelocityEventEstimateMilliRPM[motor_index];

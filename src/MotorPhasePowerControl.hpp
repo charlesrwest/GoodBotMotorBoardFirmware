@@ -30,11 +30,12 @@ enum class MotorMode : uint8_t
 struct MotorSetting
 {
   MotorMode Mode = MotorMode::BRAKES_ON;
-  int DutyCycle = 0; //0 to 100 for no power to full power
+  int DutyCycle = 0; //0 to FULL_POWER_SETTING for no power to full power
 };
 
 //Power level/mode to set a given motor to
 std::array<MotorSetting, 4> MotorSettings;
+const int FULL_POWER_SETTING = 10000;
 
 enum class HalfBridgeId
 {
@@ -50,6 +51,89 @@ enum class HalfBridgeState
   DISABLED = 2
 };
 
+
+void SetMotorPower(int motorIndex, MotorMode mode, int power)
+{
+    if((motorIndex < 0) || (motorIndex >= MotorSettings.size()))
+    {
+        return; //Invalid motor
+    }
+
+    if(power < 0)
+    {
+        power = 0;
+    }
+    if(power > FULL_POWER_SETTING)
+    {
+        power = FULL_POWER_SETTING;
+    }
+    
+    MotorSettings[motorIndex].Mode = mode;
+    MotorSettings[motorIndex].DutyCycle = power;
+}
+
+void DisableMotor(int motorIndex)
+{
+    SetMotorPower(motorIndex, MotorMode::BRAKES_ON, 0);
+}
+
+enum class MotorDirection : uint8_t
+{
+  FORWARD = 0,
+  BACKWARD = 1,
+  BRAKES_ON = 3,
+  DISABLED = 4
+};
+
+MotorMode Translate(int motorIndex, MotorDirection mode)
+{
+    if(mode == MotorDirection::BRAKES_ON)
+    {
+        return MotorMode::BRAKES_ON;
+    }
+    
+    if(mode == MotorDirection::DISABLED)
+    {
+        return MotorMode::DISABLED;
+    }
+    
+    if(mode == MotorDirection::FORWARD)
+    {
+        if((motorIndex == 0) || (motorIndex == 3))
+        {
+            return MotorMode::CCW;
+        }
+        else
+        {
+            return MotorMode::CW;
+        }
+    }
+    else if(mode == MotorDirection::BACKWARD)
+    {
+        if((motorIndex == 0) || (motorIndex == 3))
+        {
+            return MotorMode::CW;
+        }
+        else
+        {
+            return MotorMode::CCW;
+        }
+    }
+    
+    return MotorMode::BRAKES_ON;
+}
+
+void SetMotorPower(int motorIndex, MotorDirection mode, int power)
+{
+    if((motorIndex < 0) || (motorIndex >= MotorSettings.size()))
+    {
+        return; //Invalid motor
+    }
+
+    MotorMode motor_mode = Translate(motorIndex, mode);
+    
+    SetMotorPower(motorIndex, motor_mode, power);
+}
 
 /*
 //EN for motors
@@ -73,9 +157,9 @@ Motor 3: PF7, PE7, PE8
 
 class MotorsPWMManagerClass
 {
-    static const int Manager_PWM_FREQUENCY = 80000; //Hertz
+    static const int Manager_PWM_FREQUENCY = 30000; //Hertz
     static const int HundredthsOfMicroSecondsPerSecond = 100000000;
-    static const int PWM_Period_Number = HundredthsOfMicroSecondsPerSecond/Manager_PWM_FREQUENCY; 
+    static const int PWM_Period_Number = PWMController::DEFAULT_PWM_TIMER_FREQUENCY/Manager_PWM_FREQUENCY; 
 
     public:
     MotorsPWMManagerClass() : TimerPWMControllers({{{Timer::TIMER1, PWM_Period_Number}, {Timer::TIMER3, PWM_Period_Number}, {Timer::TIMER4, PWM_Period_Number}}})
@@ -88,17 +172,9 @@ class MotorsPWMManagerClass
         {
             TimerPWMControllers[en_timer_index_and_channel.first].SetDutyCycle(en_timer_index_and_channel.second, (uint32_t) 0);
         }
-        
-        /*
-        for(int pin_id : MotorControllerParametersList[motorIndex].ENPinNumbers)
-        {
-            pinMode(pin_id, OUTPUT);
-            digitalWrite(pin_id, LOW);
-        }
-        */
     }
     
-    void ActivateMotorPWM(int motorIndex, int enIndex, int dutyCycle) //Duty cycle range 0-100
+    void ActivateMotorPWM(int motorIndex, int enIndex, int dutyCycle) //Duty cycle range 0-FULL_POWER_SETTING
     {
         const auto& en_timer_index_and_channel = MotorControllerParametersList[motorIndex].ENTimerIndexAndChannelIndex[enIndex];
     
@@ -106,12 +182,12 @@ class MotorsPWMManagerClass
         {
             return;
         }
-        else if(dutyCycle > 100)
+        else if(dutyCycle > FULL_POWER_SETTING)
         {
-            dutyCycle = 100;
+            dutyCycle = FULL_POWER_SETTING;
         }
     
-        int duty_cycle_time = PWM_Period_Number*dutyCycle/100;
+        int duty_cycle_time = (PWM_Period_Number*dutyCycle)/FULL_POWER_SETTING;
         
         //chprintf((BaseSequentialStream*)&SD1, "ActivateMotorPWM %d %d %d\r\n", motorIndex, (int) enIndex, dutyCycle);
         TimerPWMControllers[en_timer_index_and_channel.first].SetDutyCycle(en_timer_index_and_channel.second, (uint32_t) duty_cycle_time);
@@ -137,7 +213,7 @@ void SetHalfBridge(int motorIndex, HalfBridgeId bridge, HalfBridgeState state, i
         return;
     }
   
-    dutyCycle = dutyCycle > 100 ? 100 : dutyCycle; //Cap magnitudes
+    dutyCycle = dutyCycle > FULL_POWER_SETTING ? FULL_POWER_SETTING : dutyCycle; //Cap magnitudes
 
     const MotorControllerParameters& parameters = MotorControllerParametersList[motorIndex];
     int bridge_number = (int) bridge;
@@ -149,11 +225,12 @@ void SetHalfBridge(int motorIndex, HalfBridgeId bridge, HalfBridgeState state, i
     {
         case HalfBridgeState::HIGH_SIDE:
             palWritePad(in_pin_info.first, in_pin_info.second, 1);
+            MotorsPWMManager->ActivateMotorPWM(motorIndex, bridge_number, dutyCycle);
             break;
       
         case HalfBridgeState::LOW_SIDE:
             palWritePad(in_pin_info.first, in_pin_info.second, 0);
-            MotorsPWMManager->ActivateMotorPWM(motorIndex, bridge_number, 100);
+            MotorsPWMManager->ActivateMotorPWM(motorIndex, bridge_number, FULL_POWER_SETTING);
             break;
       
         case HalfBridgeState::DISABLED:
@@ -176,7 +253,7 @@ void UpdateMotorHalfBridges(int motorIndex, MotorMode mode, int dutyCycle, bool 
         return;
     }
 
-    dutyCycle = dutyCycle > 100 ? 100 : dutyCycle; //Cap magnitudes
+    dutyCycle = dutyCycle > FULL_POWER_SETTING ? FULL_POWER_SETTING : dutyCycle; //Cap magnitudes
 
     int motor_state_index = HallStatesToValidIndex(hallA, hallB, hallC);
     if(motor_state_index > 5)
@@ -188,7 +265,7 @@ void UpdateMotorHalfBridges(int motorIndex, MotorMode mode, int dutyCycle, bool 
     {
         //Brakes on or something up with hall input
         //Serial.print("Brakes on\n");
-        MotorsPWMManager->StopMotorPWM(motorIndex);
+        //MotorsPWMManager->StopMotorPWM(motorIndex);
         SetHalfBridge(motorIndex, HalfBridgeId::U, HalfBridgeState::LOW_SIDE, 0);
         SetHalfBridge(motorIndex, HalfBridgeId::V, HalfBridgeState::LOW_SIDE, 0);
         SetHalfBridge(motorIndex, HalfBridgeId::W, HalfBridgeState::LOW_SIDE, 0);
@@ -219,6 +296,7 @@ void UpdateMotorHalfBridges(int motorIndex, MotorMode mode, int dutyCycle, bool 
 
     //chprintf((BaseSequentialStream*)&SD1, "Target states: %d %d %d\r\n", (int) target_states[0], (int) target_states[1], (int) target_states[2]);
 
+/*
     if(mode == MotorMode::CW)
     {
         MotorsPWMManager->ActivateMotorPWM(motorIndex, HallStateIndexToCWHighBridgeIndex[motor_state_index], dutyCycle);
@@ -231,7 +309,7 @@ void UpdateMotorHalfBridges(int motorIndex, MotorMode mode, int dutyCycle, bool 
     {
         return;
     }
-
+*/
 
     for(int phase_index = 0; phase_index < (int) target_states.size(); phase_index++)
     {
@@ -242,7 +320,7 @@ void UpdateMotorHalfBridges(int motorIndex, MotorMode mode, int dutyCycle, bool 
 
 void SetupHallStateToPhaseStateMapping()
 {
-    HallStateIndexToCWBridgeStates[0][0] = HalfBridgeState::DISABLED;
+    HallStateIndexToCWBridgeStates[0][0] = HalfBridgeState::DISABLED; //HalfBridgeState::DISABLED;
     HallStateIndexToCWBridgeStates[0][1] = HalfBridgeState::LOW_SIDE;
     HallStateIndexToCWBridgeStates[0][2] = HalfBridgeState::HIGH_SIDE;
 
