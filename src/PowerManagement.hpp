@@ -5,7 +5,7 @@
 namespace GoodBot
 {
 
-const int Charger_PWM_FREQUENCY = 1000; //Hertz
+const int Charger_PWM_FREQUENCY = 2000; //Hertz
 const int HundredthsOfMicroSecondsPerSecond = 100000000;
 const int Charger_PWM_Period_Number = HundredthsOfMicroSecondsPerSecond/Charger_PWM_FREQUENCY; 
 

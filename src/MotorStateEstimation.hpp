@@ -184,6 +184,7 @@ void UpdateVelocityEstimates()
     {
         int event_based_estimate = GetMotorVelocityMilliRPM(MotorChangeHistory[motor_index][1], MotorChangeHistory[motor_index][0]);
         
+
         if((MotorVelocityEventEstimateMilliRPM[motor_index] != event_based_estimate) && (event_based_estimate != 0)) //We really shouldn't be getting the same event twice
         {
             //An event happened, so update all estimates based on actual data we just got
@@ -206,7 +207,7 @@ void UpdateVelocityEstimates()
                 {
                     sign = 1;
                 }
-                
+                            
                 int32_t time_based_estimate = (sign*((long long int) SecondsPerMinute)*MicroSecondsPerSecond*MilliPerWhole)/(time_since_last_event_us*((long long int )NumberOfPulsesPerRevolution));
                  
                  if(abs(time_based_estimate) < abs(event_based_estimate))
@@ -214,7 +215,9 @@ void UpdateVelocityEstimates()
                     MotorVelocityEstimateMilliRPM[motor_index] = time_based_estimate;
                  }
             }
+            
         }
+        
     }
 }
 

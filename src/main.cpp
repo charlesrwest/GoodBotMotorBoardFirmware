@@ -45,7 +45,7 @@ void adcCalibrate(ADCDriver *adcp)
     // uint8_t calibration_factor = adcreg->DR & 0x7F;  // Using ADC_DR as an example.
 }
 
-#define ADC_GRP1_NUM_CHANNELS   2
+#define ADC_GRP1_NUM_CHANNELS   3
 #define ADC_GRP1_BUF_DEPTH      256
 
 static adcsample_t samples1[ADC_GRP1_NUM_CHANNELS * ADC_GRP1_BUF_DEPTH];
@@ -75,6 +75,29 @@ static adcsample_t samples1[ADC_GRP1_NUM_CHANNELS * ADC_GRP1_BUF_DEPTH];
 //52.3 between reading point and ground. So reading roughly 8.54 % of voltage.  Would expect 1.134 volts
 
 //Remove the rectifier diode and double the voltage divider values.  The resistance should be enough to protect in the case of reverse insertion.
+
+/**
+New measures for ADC:
+//bat, charger, current
+
+Battery
+Ground: 4
+15.45 volts -> 1309
+13.3 volts -> 1130
+13.5 volts -> 1145
+13.55 volts -> 1149
+13.62 -> 1153
+13.69 -> 1159
+14.67 -> 1241
+
+DC power:
+Ground: 7
+15.4 volts -> 1321
+
+Current resistor:
+15.4 volts -> 1321
+
+*/
 
 /**
 Charging testing.
@@ -123,40 +146,48 @@ Determine pin for current draw monitoring -> PA5 looks good
 
 volatile int32_t Battery_Voltage_Average_ADC_Reading = -1;
 volatile int32_t Charger_Voltage_Average_ADC_Reading = -1;
+volatile int32_t Charger_Current_Average_ADC_Reading = -1;
 static void adccallback(ADCDriver *adcp) 
 {
     int64_t average1 = 0; // For PA1
     int64_t average2 = 0; // For PA2
+    int64_t average5 = 0; // For PA5
 
     if(adcIsBufferComplete(adcp)) 
     {
         //Second half of buffer is full
-        for(int16_t buffer_index = 128; buffer_index < 256; buffer_index+=2) 
+        for(int16_t buffer_index = (ADC_GRP1_NUM_CHANNELS*ADC_GRP1_BUF_DEPTH/2); buffer_index < ADC_GRP1_NUM_CHANNELS*ADC_GRP1_BUF_DEPTH; buffer_index+=3) 
         {
             average1 += samples1[buffer_index];
             average2 += samples1[buffer_index+1];
+            average5 += samples1[buffer_index+2];
         } 
-        average2 = average2 / 64;
-        average1 = average1 / 64;
+        average2 = average2 / 128;
+        average1 = average1 / 128;
+        average5 = average5 / 128;
     }
     else 
     {
         //First half of buffer is full
-        for(int16_t buffer_index = 0; buffer_index < 128; buffer_index+=2)
+        for(int16_t buffer_index = 0; buffer_index < (ADC_GRP1_NUM_CHANNELS*ADC_GRP1_BUF_DEPTH/2); buffer_index+=3)
         {
             average1 += samples1[buffer_index];
             average2 += samples1[buffer_index+1];
+            average5 += samples1[buffer_index+2];
         } 
-        average2 = average2 / 64;
-        average1 = average1 / 64;
+        average2 = average2 / 128;
+        average1 = average1 / 128;
+        average5 = average5 / 128;
     }
 
     Battery_Voltage_Average_ADC_Reading = average2;
     Charger_Voltage_Average_ADC_Reading = average1;
-
+    Charger_Current_Average_ADC_Reading = average5;
+    
     //Convert to hundreths of a volt
-    Battery_Voltage_Average_ADC_Reading = (Battery_Voltage_Average_ADC_Reading*330)/4095;
-    Charger_Voltage_Average_ADC_Reading = (Charger_Voltage_Average_ADC_Reading*330)/4095;
+    Battery_Voltage_Average_ADC_Reading = (Battery_Voltage_Average_ADC_Reading*3300)/4095;
+    Charger_Voltage_Average_ADC_Reading = (Charger_Voltage_Average_ADC_Reading*3300)/4095;
+    Charger_Current_Average_ADC_Reading = (Charger_Current_Average_ADC_Reading*3300)/4095;
 }
 
 static void adcerrorcallback(ADCDriver *adcp, adcerror_t err) 
@@ -348,16 +379,25 @@ static THD_FUNCTION(MotorStateEstimatorThread, arg)
   
   while(true)
   {
+    chSysLock();
     UpdateHallStates();
-    UpdateVelocityEstimates();
+    chSysUnlock();
     
+    chSysLock();
+    UpdateVelocityEstimates();
+    chSysUnlock();
+
+
     for(int32_t motor_index = 0; motor_index < (int) Hall_Pin_States.size(); motor_index++)
     {
-            UpdateMotorHalfBridges(motor_index, MotorSettings[motor_index].Mode, MotorSettings[motor_index].DutyCycle, Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]);
+        chSysLock();
+        UpdateMotorHalfBridges(motor_index, MotorSettings[motor_index].Mode, MotorSettings[motor_index].DutyCycle, Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]);
+        chSysUnlock();
     }
     
-    //Update at 10 kilohertz
-    last_time = chThdSleepUntilWindowed(last_time, chTimeAddX(last_time, TIME_US2I(100)));
+    
+    //Update at 200 hz
+    last_time = chThdSleepUntilWindowed(last_time, chTimeAddX(last_time, TIME_US2I(5000)));
   }
 }
 
@@ -478,11 +518,12 @@ int main(void)
     adcgrpcfg1.cfgr1 = ADC_CFGR1_CONT | ADC_CFGR1_RES_12BIT;
     adcgrpcfg1.tr1 = ADC_TR(0, 0);
     adcgrpcfg1.smpr = ADC_SMPR_SMP1_160P5;
-    adcgrpcfg1.chselr = ADC_CHSELR_CHSEL2 | ADC_CHSELR_CHSEL1;
+    adcgrpcfg1.chselr = ADC_CHSELR_CHSEL2 | ADC_CHSELR_CHSEL1 | ADC_CHSELR_CHSEL5;
       
     
     palSetPadMode(GPIOA, 1, PAL_MODE_INPUT_ANALOG);
     palSetPadMode(GPIOA, 2, PAL_MODE_INPUT_ANALOG);
+    palSetPadMode(GPIOA, 5, PAL_MODE_INPUT_ANALOG);
     adcStart(&ADCD1, NULL);
     
     adcCalibrate(&ADCD1);
@@ -522,24 +563,22 @@ int main(void)
         for(int motor_index = 0; motor_index < (int) Hall_Pin_States.size(); motor_index++)
         {
             std::array<int, 3> state = {{Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]}};
-            if(motor_index == 3)
-            {
-            //chprintf((BaseSequentialStream*)&SD1, "Motor state %d: %d %d %d\r\n", motor_index, state[0], state[1], state[2]);//MotorVelocityEstimateMilliRPM[2]);
+            chprintf((BaseSequentialStream*)&SD1, "Motor state %d: %d %d %d\r\n", motor_index, state[0], state[1], state[2]);//MotorVelocityEstimateMilliRPM[2]);
             //chprintf((BaseSequentialStream*)&SD1, "Motor State %d\r\n", MotorChangeHistory[2][0].ValidStateIndexCW);
             //chprintf((BaseSequentialStream*)&SD1, "Motor State %d\r\n", MotorChangeHistory[2][0].ValidStateIndexCW);
             //chprintf((BaseSequentialStream*)&SD1, "ADCs %d %d\r\n", Battery_Voltage_Average_ADC_Reading, Charger_Voltage_Average_ADC_Reading);
-            }
         }
         //chprintf((BaseSequentialStream*)&SD1, "Motor velocity %d\r\n", MotorVelocityEstimateMilliRPM[2]/1000);
         
         SetBatteryChargerPower(0);
-        for(int motor_index = 0; motor_index < 1; motor_index++)//MotorSettings.size()
+        //chprintf((BaseSequentialStream*)&SD1, "ADC: %d %d %d\r\n" , Battery_Voltage_Average_ADC_Reading, Charger_Voltage_Average_ADC_Reading, Charger_Current_Average_ADC_Reading);
+        for(int motor_index = 0; motor_index < Hall_Pin_States.size(); motor_index++)//MotorSettings.size()
         {   
             if(elapsed_time < 20000)
             {
                 SetMotorTargetVelocity(motor_index, 80000);
                 
-                //SetMotorPower(motor_index, MotorDirection::BACKWARD, FULL_POWER_SETTING/2);
+                //SetMotorPower(motor_index, MotorDirection::BACKWARD, FULL_POWER_SETTING/4);
                 chprintf((BaseSequentialStream*)&SD1, "Motor speed %d: %d %d %d %d\r\n", motor_index, MotorVelocityEstimateMilliRPM[motor_index], LastPowerSettingScaled[motor_index]/PowerFixedPointScalingFactor, last_error, last_adjustment);
                 //StopMotor(motor_index);
                 //DisableMotor(motor_index);
@@ -552,7 +591,7 @@ int main(void)
             else if(elapsed_time < 60000)
             {
                 StopMotor(motor_index);
-                SetMotorPower(motor_index, MotorDirection::BACKWARD, FULL_POWER_SETTING/2);
+                //SetMotorPower(motor_index, MotorDirection::BACKWARD, FULL_POWER_SETTING/2);
                 chprintf((BaseSequentialStream*)&SD1, "Motor speed %d: %d %d %d %d\r\n", motor_index, MotorVelocityEstimateMilliRPM[motor_index], LastPowerSettingScaled[motor_index]/PowerFixedPointScalingFactor, last_error, last_adjustment);
             }
             else
