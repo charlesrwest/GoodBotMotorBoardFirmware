@@ -75,6 +75,7 @@ std::array<std::array<MotorStateChangeEvent, 2>, 4> MotorChangeHistory; //Most r
 std::array<int32_t, 4> LastMotorVelocityEventEstimateMilliRPM = {{0,0,0,0}};
 std::array<int32_t, 4> MotorVelocityEventEstimateMilliRPM = {{0,0,0,0}};
 std::array<int32_t, 4> MotorVelocityEstimateMilliRPM = {{0,0,0,0}};
+binary_semaphore_t HallInterruptTriggeredBinarySemaphore;
 
 void UpdateHallStates()
 {
@@ -114,6 +115,8 @@ void UpdateHallStates()
 
 void InitializeMotorStateEstimation()
 {
+    chBSemObjectInit(&HallInterruptTriggeredBinarySemaphore, true);
+
     for(const auto& motor_pins : Hall_Pins)
     {
         for(const std::pair<stm32_gpio_t*, int>& pin_info : motor_pins)

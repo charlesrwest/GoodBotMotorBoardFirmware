@@ -253,7 +253,7 @@ const int PowerFixedPointScalingFactor = 1000;
 
 void SetMotorTargetVelocity(int motorIndex, int TargetForwardVelocityMilliRPM)
 {
-    if((motorIndex < 0) || (motorIndex > MotorVelocityTargetMilliRPM.size()))
+    if((motorIndex < 0) || (motorIndex > (int) MotorVelocityTargetMilliRPM.size()))
     {
         return;
     }
@@ -274,7 +274,7 @@ void SetMotorTargetVelocity(int motorIndex, int TargetForwardVelocityMilliRPM)
 
 void StopMotor(int motorIndex)
 {
-    if((motorIndex < 0) || (motorIndex > MotorVelocityTargetMilliRPM.size()))
+    if((motorIndex < 0) || (motorIndex > (int) MotorVelocityTargetMilliRPM.size()))
     {
         return;
     }
@@ -284,36 +284,6 @@ void StopMotor(int motorIndex)
     LastPowerSettingScaled[motorIndex] = 0;
 }
 
-/*
-void UpdateMotorPowerForTargetVelocity()
-{
-    for(int motor_index = 0; motor_index < MotorVelocityTargetMilliRPM.size(); motor_index++)
-    {
-        if(SpeedControlDisabled[motorIndex])
-        {
-            continue;
-        }
-        
-        int target_velocity = MotorVelocityTargetMilliRPM[motor_index];
-        
-        MotorMode mode = MotorMode::CCW;
-        if(target_velocity >= 0)
-        {
-            mode = MotorMode::CW;
-        }
-        
-        int current_velocity = MotorVelocityEstimateMilliRPM[motor_index];
-        
-        
-        int velocity_difference = target_velocity - current_velocity;
-        int power_increment = abs(velocity_difference/100);
-        
-    }
-
-    MotorMode
-    MotorVelocityTargetMilliRPM
-}
-*/
 
 int last_error = 0;
 int last_adjustment = 0;
@@ -325,7 +295,7 @@ void ControlMotors(int32_t deltaTimeMilliseconds)
 
     const int use_break_threshold = 100000;
 
-    for (int motor_index = 0; motor_index < SpeedControlDisabled.size(); motor_index++)
+    for (int motor_index = 0; motor_index < (int) SpeedControlDisabled.size(); motor_index++)
     {
         if(SpeedControlDisabled[motor_index])
         {
@@ -369,35 +339,23 @@ static THD_FUNCTION(MotorStateEstimatorThread, arg)
   (void)arg;
   chRegSetThreadName("MotorStateEstimatorThread");
   
-  systime_t last_time = chVTGetSystemTime();
-  
-
-  for(int motor_index = 0; motor_index < MotorSettings.size(); motor_index++)
+  for(int motor_index = 0; motor_index < (int) MotorSettings.size(); motor_index++)
   {
     DisableMotor(motor_index);
   }
   
   while(true)
   {
-    chSysLock();
     UpdateHallStates();
-    chSysUnlock();
-    
-    chSysLock();
     UpdateVelocityEstimates();
-    chSysUnlock();
 
 
     for(int32_t motor_index = 0; motor_index < (int) Hall_Pin_States.size(); motor_index++)
     {
-        chSysLock();
         UpdateMotorHalfBridges(motor_index, MotorSettings[motor_index].Mode, MotorSettings[motor_index].DutyCycle, Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]);
-        chSysUnlock();
     }
     
-    
-    //Update at 200 hz
-    last_time = chThdSleepUntilWindowed(last_time, chTimeAddX(last_time, TIME_US2I(5000)));
+    chBSemWaitTimeout(&HallInterruptTriggeredBinarySemaphore, TIME_US2I(5000));
   }
 }
 
@@ -415,12 +373,9 @@ static void callback_function(void *arg)
 {
     (void)arg; // Unused variable
     ToggleLED((int) arg);
-    UpdateHallStates();
-    UpdateVelocityEstimates();
-    for(int32_t motor_index = 0; motor_index < (int) Hall_Pin_States.size(); motor_index++)
-    {
-        UpdateMotorHalfBridges(motor_index, MotorSettings[motor_index].Mode, MotorSettings[motor_index].DutyCycle, Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]);
-    }
+    chSysLockFromISR();
+    chBSemSignalI(&HallInterruptTriggeredBinarySemaphore);
+    chSysUnlockFromISR();
 }
 
 
@@ -435,11 +390,13 @@ static THD_FUNCTION(MotorPIDThread, arg)
   systime_t last_time = chVTGetSystemTime();
   while(true)
   {
-    ControlMotors(1);
+    ControlMotors(10);
   
-    last_time = chThdSleepUntilWindowed(last_time, chTimeAddX(last_time, TIME_US2I(100)));
+    last_time = chThdSleepUntilWindowed(last_time, chTimeAddX(last_time, TIME_US2I(1000)));
   }
 }
+
+
 
 int main(void)
 {
@@ -572,7 +529,7 @@ int main(void)
         
         SetBatteryChargerPower(0);
         //chprintf((BaseSequentialStream*)&SD1, "ADC: %d %d %d\r\n" , Battery_Voltage_Average_ADC_Reading, Charger_Voltage_Average_ADC_Reading, Charger_Current_Average_ADC_Reading);
-        for(int motor_index = 0; motor_index < Hall_Pin_States.size(); motor_index++)//MotorSettings.size()
+        for(int motor_index = 0; motor_index < (int) Hall_Pin_States.size(); motor_index++)//MotorSettings.size()
         {   
             if(elapsed_time < 20000)
             {

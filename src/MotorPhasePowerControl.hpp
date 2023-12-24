@@ -54,7 +54,7 @@ enum class HalfBridgeState
 
 void SetMotorPower(int motorIndex, MotorMode mode, int power)
 {
-    if((motorIndex < 0) || (motorIndex >= MotorSettings.size()))
+    if((motorIndex < 0) || (motorIndex >= (int) MotorSettings.size()))
     {
         return; //Invalid motor
     }
@@ -125,7 +125,7 @@ MotorMode Translate(int motorIndex, MotorDirection mode)
 
 void SetMotorPower(int motorIndex, MotorDirection mode, int power)
 {
-    if((motorIndex < 0) || (motorIndex >= MotorSettings.size()))
+    if((motorIndex < 0) || (motorIndex >= (int) MotorSettings.size()))
     {
         return; //Invalid motor
     }
