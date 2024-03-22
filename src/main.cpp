@@ -10,6 +10,10 @@
 #include "PWMController.hpp"
 #include "MotorStateEstimation.hpp"
 #include "MotorPhasePowerControl.hpp"
+#include "Messages.hpp"
+#include "MessageReader.hpp"
+#include "AtomicNanoMessageWriter.hpp"
+#include "MessageQueue.hpp"
 
 
 using namespace GoodBot;
@@ -82,13 +86,17 @@ New measures for ADC:
 
 Battery
 Ground: 4
-15.45 volts -> 1309
+0 volts -> 4
 13.3 volts -> 1130
 13.5 volts -> 1145
 13.55 volts -> 1149
 13.62 -> 1153
 13.69 -> 1159
 14.67 -> 1241
+15.45 volts -> 1309
+
+linear regression with integer math:
+microvolts = 11840*(ADCValue)−49580
 
 DC power:
 Ground: 7
@@ -96,6 +104,7 @@ Ground: 7
 
 Current resistor:
 15.4 volts -> 1321
+
 
 */
 
@@ -136,13 +145,9 @@ Probably need to implement current monitoring, since the duty cycle/current rela
 */
 
 
-/**
-TODO:
-Bypass the ADC diodes and see if the readings are still good. <- much better
-Check duty cycle vs current relationship with less charged battery.
-Determine pin for current draw monitoring -> PA5 looks good
+bool AllStop = true;
+bool CurrentlyCharging = false;
 
-*/
 
 volatile int32_t Battery_Voltage_Average_ADC_Reading = -1;
 volatile int32_t Charger_Voltage_Average_ADC_Reading = -1;
@@ -201,7 +206,7 @@ static ADCConversionGroup adcgrpcfg1;
 
 
 //LED blinking thread
-static THD_WORKING_AREA(waThread1, 128);
+static THD_WORKING_AREA(waThread1, 256);
 static THD_FUNCTION(Thread1, arg)
 {
   (void)arg;
@@ -284,6 +289,14 @@ void StopMotor(int motorIndex)
     LastPowerSettingScaled[motorIndex] = 0;
 }
 
+void StopMotors()
+{
+    for(int motor_index = 0; motor_index < ((int) MotorVelocityTargetMilliRPM.size()); motor_index++)
+    {
+        StopMotor(motor_index);
+    }
+}
+
 
 int last_error = 0;
 int last_adjustment = 0;
@@ -360,19 +373,11 @@ static THD_FUNCTION(MotorStateEstimatorThread, arg)
 }
 
 
-static SerialConfig NANO_UART_CONFIG = {
-    115200,
-    0,
-    0,
-    0,
-};
-
 const char hello_world_string[] = "Hello world!\r\n";
 
 static void callback_function(void *arg)
 {
     (void)arg; // Unused variable
-    ToggleLED((int) arg);
     chSysLockFromISR();
     chBSemSignalI(&HallInterruptTriggeredBinarySemaphore);
     chSysUnlockFromISR();
@@ -390,13 +395,317 @@ static THD_FUNCTION(MotorPIDThread, arg)
   systime_t last_time = chVTGetSystemTime();
   while(true)
   {
-    ControlMotors(10);
-  
+    if(AllStop || CurrentlyCharging)
+    {
+        StopMotors();
+    }
+    else
+    {
+        ControlMotors(10);
+    }
+    
     last_time = chThdSleepUntilWindowed(last_time, chTimeAddX(last_time, TIME_US2I(1000)));
   }
 }
 
+static SerialConfig GPS_SERIAL_CONFIG = {
+    38400,
+    0,
+    0,
+    0,
+};
 
+const static std::array<uint8_t, 44> UBX_CFG_NAV5_STRING = {0xB5, 0x62, 0x06, 0x24, 0x24, 0x00, 0xFF, 0xFF, 0x03, 0x03, 0x00, 0x00, 0x00, 0x00, 0x10, 0x27, 0x00, 0x00, 0x05, 0x00, 0xFA, 0x00, 0xFA, 0x00, 0x64, 0x00, 0x2C, 0x01, 0x00, 0x3C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4F, 0x82};
+
+static THD_WORKING_AREA(GPS_UART_ThreadWorkingArea, 1024);
+static THD_FUNCTION(GPS_UART_Thread, arg) 
+{
+    (void)arg;
+    chRegSetThreadName("GPS_UART_Thread");
+
+    //Setup pins for GPS UART
+    sdStart(&SD2, &GPS_SERIAL_CONFIG);
+    palSetPadMode(GPIOD, 5, PAL_MODE_ALTERNATE(0)); //USART2_TX
+    palSetPadMode(GPIOD, 6, PAL_MODE_ALTERNATE(0)); //USART2_RX
+
+    chThdSleepMilliseconds(2000); //Give the GPS time to wake up and be ready to receive
+
+    //Set to pedestrian
+    for(int8_t try_index = 0; try_index < 10; try_index++)
+    {
+        chnWrite(&SD2, (uint8_t*) UBX_CFG_NAV5_STRING.data(), UBX_CFG_NAV5_STRING.size());
+        chThdSleepMilliseconds(20);
+    }
+
+    AtomicNanoMessageWriter uart_writer;
+
+    std::array<char, 32> receive_buffer; //Change to 32 to fit max nano UART passing message size
+
+    while(true)
+    {
+        //Long timeout, get a single character
+        int32_t number_of_bytes_read = chnReadTimeout(&SD2, (uint8_t*) receive_buffer.data(), receive_buffer.size(), TIME_MS2I(50));
+
+        //Forward received message
+        //Construct and send message to USB
+        if(number_of_bytes_read > 0)
+        {
+            uart_writer.BeginTransaction();
+            uart_writer.WriteMessageHeader(MessageType::REPORT_NMEA_STRING_PART, 0);
+            uart_writer.WriteBinary((const char *) receive_buffer.data(), number_of_bytes_read);
+            uart_writer.CommitTransaction();
+        }
+    }
+
+}
+
+
+static SerialConfig NANO_UART_CONFIG = {
+    115200,
+    0,
+    0,
+    0,
+};
+
+static THD_WORKING_AREA(Nano_Write_UART_ThreadWorkingArea, 3072);
+static THD_FUNCTION(Nano_Write_UART_Thread, arg) 
+{
+    (void)arg;
+    chRegSetThreadName("Nano_Write_UART_Thread");
+
+//Maintain 2 buffers.  Buffer 1 is mutex protected and for other threads to write to.  Buffer 2 is internal to the UART write thread and is used for writes.  When a write to buffer 1 is completed, the UART write thread is woken up to claim Buffer 1 and copy its contents to buffer 2.  It then writes the contents of buffer 2 to UART.
+
+    MessageQueue<OUTGOING_NANO_MESSAGE_QUEUE_MAX_MESSAGE_COUNT, MAX_OUTGOING_NANO_MESSAGE_BUFFER_MESSAGE_SIZE> global_usb_write_queue;
+    GLOBAL_OUTGOING_NANO_MESSAGE_QUEUE = &global_usb_write_queue; //Make queue globally accessable
+
+    std::array<char, 512> internal_buffer;
+    PPPEncoder encoder;
+
+    //Setup pins for GPS UART
+    sdStart(&SD1, &NANO_UART_CONFIG);
+    palSetPadMode(GPIOB, 6, PAL_MODE_ALTERNATE(0)); //USART1_TX
+    palSetPadMode(GPIOB, 7, PAL_MODE_ALTERNATE(0)); //USART1_RX
+
+    while(true)
+    {   
+        int32_t number_of_messages = GLOBAL_OUTGOING_NANO_MESSAGE_QUEUE->NumberOfMessagesAvailable();
+        number_of_messages = std::max<int32_t>(1, number_of_messages); //Do a blocking read if there aren't any ready to be read
+
+        int32_t buffer_offset = 0;
+        for(int32_t message_index = 0; message_index < number_of_messages; message_index++)
+        {
+            int32_t bytes_retrieved = GLOBAL_OUTGOING_NANO_MESSAGE_QUEUE->RetrieveMessage((uint8_t*) (internal_buffer.data() + buffer_offset), internal_buffer.size() - buffer_offset, 100);
+            if(bytes_retrieved < 0)
+            {
+                break; //Out of messages to process
+            }
+
+            buffer_offset += bytes_retrieved;
+        }
+
+        //Frame and write to nano
+        if(buffer_offset > 0)
+        {
+            char start_byte = encoder.StartFrame();
+            chnWrite(&SD1, (uint8_t*) &start_byte, sizeof(start_byte));
+            for(int32_t buffer_index = 0; buffer_index < buffer_offset; buffer_index++)
+            {
+                std::array<char, 2> encoded_bytes = encoder.EncodeCharacter(internal_buffer[buffer_index]);
+                chnWrite(&SD1, (uint8_t*) encoded_bytes.data(), encoder.NumberOfEncodedCharactersToUse());
+            }
+
+            std::array<char, MaxEndFrameLength> encoded_bytes = encoder.EndFrame();
+            chnWrite(&SD1, (uint8_t*) encoded_bytes.data(), encoder.NumberOfEncodedCharactersToUse());
+        }
+    }
+}
+
+static THD_WORKING_AREA(Nano_Read_UART_ThreadWorkingArea, 1024);
+static THD_FUNCTION(Nano_Read_UART_Thread, arg) 
+{
+    (void)arg;
+    chRegSetThreadName("Nano_Read_UART_Thread");
+
+    auto SetPWMToStop = [&]()
+    {
+        //STOP
+    };
+
+    //Set chassis to start out stopped and wheels pointed center
+    SetPWMToStop();
+
+    uint32_t milliseconds_to_wait_without_command_before_shutdown = 300;
+    uint32_t time_of_last_update = chVTGetSystemTime() - TIME_MS2I(milliseconds_to_wait_without_command_before_shutdown*2);
+ 
+    MessageReader<256> reader;
+    while(true)
+    {
+        uint32_t current_time_minus_stop_delay = chVTGetSystemTime() - TIME_MS2I(milliseconds_to_wait_without_command_before_shutdown);
+        if(current_time_minus_stop_delay > time_of_last_update)
+        {
+            SetPWMToStop(); //Haven't gotten update in a while, so switch to safe state
+        }
+        int32_t frames_decoded = reader.BlockingRead(SD2, 500); //Wait for 500 milliseconds
+
+        while(reader.PeekNextMessageType() != MessageType::INVALID)
+        {
+            switch(reader.PeekNextMessageType())
+            {
+                case MessageType::SET_PWM:
+                {
+                    SetPWMMessage message;
+                    if(!reader.GetMessage(message))
+                    {
+                       continue;
+                    }
+
+                    if(message.Channel == 0)
+                    {
+                    /*
+                        bool got_lock = chMtxTryLock(&pwm_mutex);
+                        if(got_lock)
+                        {
+                            ToggleBlueLED();
+                            pwm_controller->SetDutyCycle(STEERING_CHANNEL, (uint32_t) message.OnTime);
+                            chMtxUnlock(&pwm_mutex);
+                        }
+                        */
+                        time_of_last_update = chVTGetSystemTime();
+                    }
+                    else if(message.Channel == 1)
+                    {
+                        //Set target for speed/direction
+                        /*
+                        bool got_lock = chMtxTryLock(&pwm_mutex);
+                        if(got_lock)
+                        {
+                            //ToggleBlueLED();
+                            pwm_controller->SetDutyCycle(SPEED_CHANNEL, (uint32_t) message.OnTime);
+                            chMtxUnlock(&pwm_mutex);
+                        }
+                        */
+                        time_of_last_update = chVTGetSystemTime();
+                    }
+                }
+                break;
+
+                default:
+                chThdSleepMilliseconds(2);
+                break;
+            }
+        }
+    }
+
+}
+
+bool IsBetween(int value, int lowerBound, int upperBound)
+{
+    return (value > lowerBound) && (value < upperBound);
+}
+
+int ConvertBatteryADCToMicrovolts(int adcValue)
+{
+    return 11840*(adcValue)-49580;
+}
+
+static THD_WORKING_AREA(Battery_Management_ThreadWorkingArea, 1024);
+static THD_FUNCTION(Battery_Management_Thread, arg) 
+{
+    /**
+    Charging plan for now:
+    1. Define a target charge voltage Vt = 14.2 volts.  This is the voltage that we want the battery to reach during the charging cycle.
+    2. Define a recharge voltage Vc = 12.4 volts.  This is the maximum voltage the battery can be to start a recharge cycle.
+    3. Define an expected voltage window for both the battery and the charger.  If the battery or the charger are outside the window, no charging will occur (battery damaged, battery disconnected, charger disconnected, etc).
+        *For battery: (11.5 volts, 14.4 volts) both when connected to charger and without
+        *For charger: (14.4 volts, 15.8 volts) when disconnected from battery, battery range when connected
+    4. If the battery voltage and the charger are inside the expected voltage window range and the battery voltage is < Vc, the charging cycle will be initiated.
+    5. During the charging cycle, the PWM duty cycle will be set to 32% until either a maximum time or the battery voltage reaches Vt.  If either the battery or the charge voltage moves ouside the expected voltage window, then charging is disabled.
+    6. Set a minimum voltage for motor operations Vm = 12.2 volts.  If the battery goes below 12.2 volts, disable main system power.
+
+
+    Implementation loop:
+    State: CurrentlyCharging, AllStop.
+
+    Every 10 ms, check if we should be charging.  PWM set to 32% if CurrentlyCharging is set to true and 0% otherwise.
+
+    1. If battery and charger voltages are outside of the acceptable windows, CurrentlyCharging = false.
+    2. else if battery voltage >= Vt, CurrentlyCharging = false.
+    3. else if battery voltage < Vc, CurrentlyCharging = true.
+
+    if CurrentlyCharging == true, battery voltage is outside of the acceptable window or battery voltage is < Vm, AllStop = true.
+
+    Set PWM value according to CurrentlyCharging, wait for next 10 ms checkin.  Also, force motors into BRAKE mode and kill main power if AllStop is triggered.
+    */
+    (void)arg;
+    chRegSetThreadName("Battery_Management_Thread");
+    
+    const static int target_voltage_micro_volts = 14200000;
+    const static int recharge_voltage_micro_volts = 13800000;
+    const static int min_batter_voltage_micro_volts = 12200000;
+    const static std::array<const int, 2> battery_voltage_window = {{11500000, 14400000}};
+    const static std::array<const int, 2> charger_voltage_window = {{14400000, 15800000}};
+
+    chThdSleepMilliseconds(500);
+
+    systime_t last_time = chVTGetSystemTime();
+    while(true)
+    {
+        int battery_voltage_estimate_microvolts = ConvertBatteryADCToMicrovolts(Battery_Voltage_Average_ADC_Reading);
+        int charger_voltage_estimate_microvolts = ConvertBatteryADCToMicrovolts(Charger_Voltage_Average_ADC_Reading);
+    
+        bool battery_voltage_in_window = IsBetween(battery_voltage_estimate_microvolts, battery_voltage_window[0], battery_voltage_window[1]);
+        bool charger_voltage_in_window = false;
+        charger_voltage_in_window = IsBetween(charger_voltage_estimate_microvolts, charger_voltage_window[0], charger_voltage_window[1]);
+
+        
+        //1. If battery and charger voltages are outside of the acceptable windows, CurrentlyCharging = false.
+        if((!battery_voltage_in_window) || (!charger_voltage_in_window))
+        {
+            CurrentlyCharging = false;
+        }
+        //2. else if battery voltage >= Vt, CurrentlyCharging = false.
+        else if(battery_voltage_estimate_microvolts > target_voltage_micro_volts)
+        {
+            CurrentlyCharging = false;
+        }
+        else if(battery_voltage_estimate_microvolts < recharge_voltage_micro_volts)
+        {
+            CurrentlyCharging = true;
+        }
+        
+        //chprintf((BaseSequentialStream*)&SD1, "battery: %d %d %d %d %d %d\r\n" , battery_voltage_estimate_microvolts, charger_voltage_estimate_microvolts, battery_voltage_in_window, charger_voltage_in_window, (battery_voltage_estimate_microvolts < min_batter_voltage_micro_volts), CurrentlyCharging);
+        
+        
+        //if CurrentlyCharging == true, battery voltage is outside of the acceptable window or battery voltage is < Vm, AllStop = true.
+        if(CurrentlyCharging || (!battery_voltage_in_window) || (battery_voltage_estimate_microvolts < min_batter_voltage_micro_volts) || charger_voltage_in_window)
+        {
+            AllStop = true;
+            if(!CurrentlyCharging)
+            {
+                SetMainPower(false);
+            }
+        }
+        else
+        {
+            AllStop = false;
+            SetMainPower(true);
+        }
+        
+        if(CurrentlyCharging)
+        {
+            SetBatteryChargerPower(34);
+        }
+        else
+        {
+            SetBatteryChargerPower(0);
+        }
+        
+        //SetLED(1, CurrentlyCharging);
+        //SetLED(2, AllStop);
+        
+        last_time = chThdSleepUntilWindowed(last_time, chTimeAddX(last_time, TIME_US2I(100000)));
+    }
+}
 
 int main(void)
 {
@@ -493,13 +802,8 @@ int main(void)
 
 //{{{GPIOF, 3}, {GPIOF, 4}, {GPIOF, 5}}}, {{{GPIOC, 6}, {GPIOC, 7}, {GPIOD, 8}}},  {{{GPIOB, 12}, {GPIOB, 13}, {GPIOB, 14}}},  {{{GPIOF, 7}, {GPIOE, 7}, {GPIOE, 8}}}
 
-    chThdSleepMilliseconds(500);
+    chThdSleepMilliseconds(5000);
     SetMainPower(true);
-
-    //Setup pins for nano UART
-    sdStart(&SD1, &NANO_UART_CONFIG);
-    palSetPadMode(GPIOB, 6, PAL_MODE_ALTERNATE(0)); //USART1_TX
-    palSetPadMode(GPIOB, 7, PAL_MODE_ALTERNATE(0)); //USART1_RX
 
     //Setup pins for motor control
     MotorsPWMManagerClass motor_pwm_manager;
@@ -510,6 +814,13 @@ int main(void)
     chThdCreateStatic(waThread1, sizeof(waThread1), NORMALPRIO, Thread1, NULL);
     chThdCreateStatic(MotorStateEstimatorThreadWorkingArea, sizeof(MotorStateEstimatorThreadWorkingArea), NORMALPRIO, MotorStateEstimatorThread, NULL);
     chThdCreateStatic(MotorPIDThreadWorkingArea, sizeof(MotorPIDThreadWorkingArea), NORMALPRIO, MotorPIDThread, NULL);
+    chThdCreateStatic(GPS_UART_ThreadWorkingArea, sizeof(GPS_UART_ThreadWorkingArea), NORMALPRIO, GPS_UART_Thread, NULL);
+    chThdCreateStatic(Battery_Management_ThreadWorkingArea, sizeof(Battery_Management_ThreadWorkingArea), NORMALPRIO, Battery_Management_Thread, NULL);
+
+    //Start the Nano UART writer/reader threads
+    chThdCreateStatic(Nano_Write_UART_ThreadWorkingArea, sizeof(Nano_Write_UART_ThreadWorkingArea), NORMALPRIO, Nano_Write_UART_Thread, NULL);
+    //chThdCreateStatic(Nano_Read_UART_ThreadWorkingArea, sizeof(Nano_Read_UART_ThreadWorkingArea), NORMALPRIO, Nano_Read_UART_Thread, NULL);
+
 
     int elapsed_time = 0;
     while(true)
@@ -520,44 +831,47 @@ int main(void)
         for(int motor_index = 0; motor_index < (int) Hall_Pin_States.size(); motor_index++)
         {
             std::array<int, 3> state = {{Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]}};
-            chprintf((BaseSequentialStream*)&SD1, "Motor state %d: %d %d %d\r\n", motor_index, state[0], state[1], state[2]);//MotorVelocityEstimateMilliRPM[2]);
+            //chprintf((BaseSequentialStream*)&SD1, "Motor state %d: %d %d %d\r\n", motor_index, state[0], state[1], state[2]);//MotorVelocityEstimateMilliRPM[2]);
             //chprintf((BaseSequentialStream*)&SD1, "Motor State %d\r\n", MotorChangeHistory[2][0].ValidStateIndexCW);
             //chprintf((BaseSequentialStream*)&SD1, "Motor State %d\r\n", MotorChangeHistory[2][0].ValidStateIndexCW);
             //chprintf((BaseSequentialStream*)&SD1, "ADCs %d %d\r\n", Battery_Voltage_Average_ADC_Reading, Charger_Voltage_Average_ADC_Reading);
         }
         //chprintf((BaseSequentialStream*)&SD1, "Motor velocity %d\r\n", MotorVelocityEstimateMilliRPM[2]/1000);
         
-        SetBatteryChargerPower(0);
+        //SetBatteryChargerPower(0);
         //chprintf((BaseSequentialStream*)&SD1, "ADC: %d %d %d\r\n" , Battery_Voltage_Average_ADC_Reading, Charger_Voltage_Average_ADC_Reading, Charger_Current_Average_ADC_Reading);
-        for(int motor_index = 0; motor_index < (int) Hall_Pin_States.size(); motor_index++)//MotorSettings.size()
+        for(int motor_index = 4; motor_index < 4/*(int) Hall_Pin_States.size()*/; motor_index++)//MotorSettings.size()
         {   
+        SetMotorTargetVelocity(motor_index, 80000);
+        /*
             if(elapsed_time < 20000)
             {
                 SetMotorTargetVelocity(motor_index, 80000);
                 
                 //SetMotorPower(motor_index, MotorDirection::BACKWARD, FULL_POWER_SETTING/4);
-                chprintf((BaseSequentialStream*)&SD1, "Motor speed %d: %d %d %d %d\r\n", motor_index, MotorVelocityEstimateMilliRPM[motor_index], LastPowerSettingScaled[motor_index]/PowerFixedPointScalingFactor, last_error, last_adjustment);
+                //chprintf((BaseSequentialStream*)&SD1, "Motor speed %d: %d %d %d %d\r\n", motor_index, MotorVelocityEstimateMilliRPM[motor_index], LastPowerSettingScaled[motor_index]/PowerFixedPointScalingFactor, last_error, last_adjustment);
                 //StopMotor(motor_index);
                 //DisableMotor(motor_index);
             }
             else if(elapsed_time < 40000)
             {
                 SetMotorTargetVelocity(motor_index, -12000);
-                chprintf((BaseSequentialStream*)&SD1, "Motor speed %d: %d %d %d %d\r\n", motor_index, MotorVelocityEstimateMilliRPM[motor_index], LastPowerSettingScaled[motor_index]/PowerFixedPointScalingFactor, last_error, last_adjustment);
+                //chprintf((BaseSequentialStream*)&SD1, "Motor speed %d: %d %d %d %d\r\n", motor_index, MotorVelocityEstimateMilliRPM[motor_index], LastPowerSettingScaled[motor_index]/PowerFixedPointScalingFactor, last_error, last_adjustment);
             }
             else if(elapsed_time < 60000)
             {
                 StopMotor(motor_index);
                 //SetMotorPower(motor_index, MotorDirection::BACKWARD, FULL_POWER_SETTING/2);
-                chprintf((BaseSequentialStream*)&SD1, "Motor speed %d: %d %d %d %d\r\n", motor_index, MotorVelocityEstimateMilliRPM[motor_index], LastPowerSettingScaled[motor_index]/PowerFixedPointScalingFactor, last_error, last_adjustment);
+                //chprintf((BaseSequentialStream*)&SD1, "Motor speed %d: %d %d %d %d\r\n", motor_index, MotorVelocityEstimateMilliRPM[motor_index], LastPowerSettingScaled[motor_index]/PowerFixedPointScalingFactor, last_error, last_adjustment);
             }
             else
             {
                 StopMotor(motor_index);
                 //SetMotorPower(motor_index, MotorMode::DISABLED, 0);
-                chprintf((BaseSequentialStream*)&SD1, "Motor speed %d: %d\r\n", motor_index, MotorVelocityEstimateMilliRPM[motor_index]);
+                //chprintf((BaseSequentialStream*)&SD1, "Motor speed %d: %d\r\n", motor_index, MotorVelocityEstimateMilliRPM[motor_index]);
                 DisableMotor(motor_index);
             }
+            */
         }
         
         /*

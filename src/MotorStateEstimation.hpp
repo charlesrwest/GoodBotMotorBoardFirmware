@@ -171,7 +171,7 @@ int GetMotorVelocityMilliRPM(const struct MotorStateChangeEvent& lastEvent, cons
   return velocity;
 }
 
-int32_t abs(int32_t value)
+int32_t gb_abs(int32_t value)
 {
     if(value >= 0)
     {
@@ -213,7 +213,7 @@ void UpdateVelocityEstimates()
                             
                 int32_t time_based_estimate = (sign*((long long int) SecondsPerMinute)*MicroSecondsPerSecond*MilliPerWhole)/(time_since_last_event_us*((long long int )NumberOfPulsesPerRevolution));
                  
-                 if(abs(time_based_estimate) < abs(event_based_estimate))
+                 if(gb_abs(time_based_estimate) < gb_abs(event_based_estimate))
                  {
                     MotorVelocityEstimateMilliRPM[motor_index] = time_based_estimate;
                  }
