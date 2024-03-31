@@ -82,6 +82,19 @@ Message type 12 (Target velocity to try to achieve)
 msgpack_int 12
 msgpack_int 0
 msgpack_double Velocity in m/s (positive forward)
+
+Message type 13 (motor rotation velocity estimate)
+msgpack_int 13
+msgpack_int 0
+msgpack_int motor_id
+msgpack_int motor_velocity_milli_rpm (forward+)
+
+Message type 14 (motor rotation velocity target)
+msgpack_int 14
+msgpack_int 0
+msgpack_int left_target_motor_velocity_milli_rpm (forward+)
+msgpack_int right_target_motor_velocity_milli_rpm (forward+)
+msgpack_int brakes_on (1 if true, 0 otherwise)
 */
 
 struct Vector3D
@@ -114,7 +127,8 @@ REPORT_ORIENTATION = 8,
 REPORT_ERROR = 9,
 REPORT_NMEA_STRING_PART = 10,
 REPORT_ESTIMATED_SPEED = 11,
-SET_TARGET_VELOCITY = 12
+SET_TARGET_VELOCITY = 12,
+SET_MOTOR_ROTATION_VELOCITY_TARGET = 14
 };
 
 struct SetPWMMessage
@@ -132,8 +146,14 @@ struct SetTargetVelocityMessage
     double Velocity; //m/s
 };
 
-
-
+struct SetMotorRotationVelocityTarget
+{
+    MessageType Type;
+    int64_t Version;
+    int64_t TargetMotorVelocityMilliRPMLeft;
+    int64_t TargetMotorVelocityMilliRPMRight;
+    int64_t BrakesOn;
+};
 
 
 

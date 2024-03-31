@@ -12,6 +12,8 @@
     #include<istream>
 #endif
 
+#include "LEDs.hpp"
+
 namespace GoodBot
 {
 
@@ -40,6 +42,7 @@ This function retrieves the next message from the internal buffer if it matches 
 @return: true if it was able to retrieve the given message type and false otherwise
 */
 inline bool GetMessage(SetPWMMessage& buffer);
+inline bool GetMessage(SetMotorRotationVelocityTarget& buffer);
 
 /**
 This function retrieves the next message from the internal buffer if it matches the given type and advances the buffer.
@@ -152,6 +155,45 @@ bool MessageReader<BufferSize>::GetMessage(SetPWMMessage& buffer)
 }
 
 template<size_t BufferSize>
+bool MessageReader<BufferSize>::GetMessage(SetMotorRotationVelocityTarget& buffer)
+{
+    if(PeekNextMessageType() != MessageType::SET_MOTOR_ROTATION_VELOCITY_TARGET)
+    {
+        return false;
+    }
+                        ToggleLED(2);
+
+    buffer.Type = PeekNextMessageType();
+
+    if(!cmp_read_long(&Context, &buffer.Version))
+    {
+        UpdateNextMessageType();
+        return false;
+    }
+
+    if(!cmp_read_long(&Context, &buffer.TargetMotorVelocityMilliRPMLeft))
+    {
+        UpdateNextMessageType();
+        return false;
+    }
+
+    if(!cmp_read_long(&Context, &buffer.TargetMotorVelocityMilliRPMRight))
+    {
+        UpdateNextMessageType();
+        return false;
+    }
+    
+    if(!cmp_read_long(&Context, &buffer.BrakesOn))
+    {
+        UpdateNextMessageType();
+        return false;
+    }
+
+    UpdateNextMessageType();
+    return true;
+}
+
+template<size_t BufferSize>
 bool MessageReader<BufferSize>::GetMessage(SetTargetVelocityMessage& buffer)
 {
     if(PeekNextMessageType() != MessageType::SET_TARGET_VELOCITY)
@@ -186,7 +228,7 @@ void MessageReader<BufferSize>::UpdateNextMessageType()
     {
         if(cmp_read_long(&Context, &NextInteger))
         {
-            if((NextInteger != 0) && (NextInteger != 12))
+            if((NextInteger != 14) && (NextInteger != 12))
             {
                 continue;
             }

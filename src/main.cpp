@@ -334,6 +334,7 @@ void ControlMotors(int32_t deltaTimeMilliseconds)
         int actual_power = abs(power_scaled/PowerFixedPointScalingFactor);
         MotorMode mode = power_scaled > 0 ? MotorMode::CW : MotorMode::CCW;
 
+/*
         if((abs(currentVelocity) > use_break_threshold) && ((currentVelocity < 0) != (desiredVelocity < 0)))
         {
             //Need to reverse direction but doing so while powered will cause a big voltage spike.  Use the brake to slow down and then apply power
@@ -343,6 +344,8 @@ void ControlMotors(int32_t deltaTimeMilliseconds)
         {
             SetMotorPower(motor_index, mode, actual_power);
         }
+        */
+        SetMotorPower(motor_index, mode, actual_power);
     }
 }
 
@@ -368,7 +371,7 @@ static THD_FUNCTION(MotorStateEstimatorThread, arg)
         UpdateMotorHalfBridges(motor_index, MotorSettings[motor_index].Mode, MotorSettings[motor_index].DutyCycle, Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]);
     }
     
-    chBSemWaitTimeout(&HallInterruptTriggeredBinarySemaphore, TIME_US2I(5000));
+    chBSemWaitTimeout(&HallInterruptTriggeredBinarySemaphore, TIME_US2I(20000));
   }
 }
 
@@ -528,7 +531,10 @@ static THD_FUNCTION(Nano_Read_UART_Thread, arg)
 
     auto SetPWMToStop = [&]()
     {
-        //STOP
+        StopMotor(0);
+        StopMotor(1);
+        StopMotor(2);
+        StopMotor(3);
     };
 
     //Set chassis to start out stopped and wheels pointed center
@@ -545,47 +551,36 @@ static THD_FUNCTION(Nano_Read_UART_Thread, arg)
         {
             SetPWMToStop(); //Haven't gotten update in a while, so switch to safe state
         }
-        int32_t frames_decoded = reader.BlockingRead(SD2, 500); //Wait for 500 milliseconds
+        int32_t frames_decoded = reader.BlockingRead(SD1, 500); //Wait for 500 milliseconds
 
         while(reader.PeekNextMessageType() != MessageType::INVALID)
         {
             switch(reader.PeekNextMessageType())
             {
-                case MessageType::SET_PWM:
+                case MessageType::SET_MOTOR_ROTATION_VELOCITY_TARGET:
                 {
-                    SetPWMMessage message;
+                    SetMotorRotationVelocityTarget message;
                     if(!reader.GetMessage(message))
                     {
                        continue;
                     }
 
-                    if(message.Channel == 0)
+
+                    ToggleLED(1);
+                    if(!message.BrakesOn)
                     {
-                    /*
-                        bool got_lock = chMtxTryLock(&pwm_mutex);
-                        if(got_lock)
-                        {
-                            ToggleBlueLED();
-                            pwm_controller->SetDutyCycle(STEERING_CHANNEL, (uint32_t) message.OnTime);
-                            chMtxUnlock(&pwm_mutex);
-                        }
-                        */
-                        time_of_last_update = chVTGetSystemTime();
+                        SetMotorTargetVelocity(0, message.TargetMotorVelocityMilliRPMLeft);
+                        SetMotorTargetVelocity(3, message.TargetMotorVelocityMilliRPMLeft);
+                    
+                        SetMotorTargetVelocity(1, message.TargetMotorVelocityMilliRPMRight);
+                        SetMotorTargetVelocity(2, message.TargetMotorVelocityMilliRPMRight);
                     }
-                    else if(message.Channel == 1)
+                    else
                     {
-                        //Set target for speed/direction
-                        /*
-                        bool got_lock = chMtxTryLock(&pwm_mutex);
-                        if(got_lock)
-                        {
-                            //ToggleBlueLED();
-                            pwm_controller->SetDutyCycle(SPEED_CHANNEL, (uint32_t) message.OnTime);
-                            chMtxUnlock(&pwm_mutex);
-                        }
-                        */
-                        time_of_last_update = chVTGetSystemTime();
+                        SetPWMToStop();
                     }
+                    
+                    time_of_last_update = chVTGetSystemTime();
                 }
                 break;
 
@@ -795,10 +790,6 @@ int main(void)
     adcCalibrate(&ADCD1);
     
     adcStartConversion(&ADCD1, &adcgrpcfg1, samples1, ADC_GRP1_BUF_DEPTH);
-    
-    //palSetPadMode(GPIOF, 3,  PAL_MODE_INPUT_PULLUP); // <- causes crashes but can be set to pulldown.  However, crashes if set high
-    //palSetPadMode(GPIOF, 4,  PAL_MODE_INPUT_PULLUP); // <- causes crashes but can read if pulldown
-    //palSetPadMode(GPIOF, 5,  PAL_MODE_INPUT_PULLUP); // <- works as expected
 
 //{{{GPIOF, 3}, {GPIOF, 4}, {GPIOF, 5}}}, {{{GPIOC, 6}, {GPIOC, 7}, {GPIOD, 8}}},  {{{GPIOB, 12}, {GPIOB, 13}, {GPIOB, 14}}},  {{{GPIOF, 7}, {GPIOE, 7}, {GPIOE, 8}}}
 
@@ -810,8 +801,9 @@ int main(void)
     MotorsPWMManager = &motor_pwm_manager;
     SetupMotorControllerPins();
 
-
     chThdCreateStatic(waThread1, sizeof(waThread1), NORMALPRIO, Thread1, NULL);
+
+
     chThdCreateStatic(MotorStateEstimatorThreadWorkingArea, sizeof(MotorStateEstimatorThreadWorkingArea), NORMALPRIO, MotorStateEstimatorThread, NULL);
     chThdCreateStatic(MotorPIDThreadWorkingArea, sizeof(MotorPIDThreadWorkingArea), NORMALPRIO, MotorPIDThread, NULL);
     chThdCreateStatic(GPS_UART_ThreadWorkingArea, sizeof(GPS_UART_ThreadWorkingArea), NORMALPRIO, GPS_UART_Thread, NULL);
@@ -819,8 +811,7 @@ int main(void)
 
     //Start the Nano UART writer/reader threads
     chThdCreateStatic(Nano_Write_UART_ThreadWorkingArea, sizeof(Nano_Write_UART_ThreadWorkingArea), NORMALPRIO, Nano_Write_UART_Thread, NULL);
-    //chThdCreateStatic(Nano_Read_UART_ThreadWorkingArea, sizeof(Nano_Read_UART_ThreadWorkingArea), NORMALPRIO, Nano_Read_UART_Thread, NULL);
-
+    chThdCreateStatic(Nano_Read_UART_ThreadWorkingArea, sizeof(Nano_Read_UART_ThreadWorkingArea), NORMALPRIO, Nano_Read_UART_Thread, NULL);
 
     int elapsed_time = 0;
     while(true)
