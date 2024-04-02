@@ -304,7 +304,7 @@ int last_adjustment = 0;
 void ControlMotors(int32_t deltaTimeMilliseconds)
 {
     const int fixed_scale = 10000;
-    const int max_speed = 230000; //200 rpm
+    const int max_speed = 600000; //200 rpm
 
     const int use_break_threshold = 100000;
 
@@ -371,7 +371,7 @@ static THD_FUNCTION(MotorStateEstimatorThread, arg)
         UpdateMotorHalfBridges(motor_index, MotorSettings[motor_index].Mode, MotorSettings[motor_index].DutyCycle, Hall_Pin_States[motor_index][0], Hall_Pin_States[motor_index][1], Hall_Pin_States[motor_index][2]);
     }
     
-    chBSemWaitTimeout(&HallInterruptTriggeredBinarySemaphore, TIME_US2I(20000));
+    chBSemWaitTimeout(&HallInterruptTriggeredBinarySemaphore, TIME_US2I(1000));
   }
 }
 
