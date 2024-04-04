@@ -1,6 +1,6 @@
 This license covers the code in the src folder (3-Clause BSD License).  The stuff in the cmp has it's own MIT license and the stuff in the cfg file's part of ChibiOS which has it's own license stuff.
 
-Copyright 2023 Charles Ryan West
+Copyright 2024 Charles Ryan West
 
 Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
 

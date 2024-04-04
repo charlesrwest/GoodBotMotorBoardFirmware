@@ -317,14 +317,14 @@ void ControlMotors(int32_t deltaTimeMilliseconds)
         
         int currentVelocity = MotorVelocityEstimateMilliRPM[motor_index];
         int desiredVelocity = MotorVelocityTargetMilliRPM[motor_index];
-        int average_velocity_scale = abs(desiredVelocity);
+        int average_velocity_scale = abs(desiredVelocity) > abs(currentVelocity) ? abs(desiredVelocity) : abs(currentVelocity);
         int desired_velocity_scaling_factor = (average_velocity_scale*100)/max_speed;
         int power_adjustment_constant = 16*desired_velocity_scaling_factor;
     
 
         int desired_change = desiredVelocity - currentVelocity;
         last_error = desired_change;
-        int power_adjustment = desired_change*power_adjustment_constant*deltaTimeMilliseconds/fixed_scale;
+        int power_adjustment = desired_change > 0 ? 50000*power_adjustment_constant*deltaTimeMilliseconds/fixed_scale : -50000*power_adjustment_constant*deltaTimeMilliseconds/fixed_scale;
         last_adjustment = power_adjustment;
 
         
@@ -804,7 +804,7 @@ int main(void)
     chThdCreateStatic(waThread1, sizeof(waThread1), NORMALPRIO, Thread1, NULL);
 
 
-    chThdCreateStatic(MotorStateEstimatorThreadWorkingArea, sizeof(MotorStateEstimatorThreadWorkingArea), NORMALPRIO, MotorStateEstimatorThread, NULL);
+    chThdCreateStatic(MotorStateEstimatorThreadWorkingArea, sizeof(MotorStateEstimatorThreadWorkingArea), HIGHPRIO, MotorStateEstimatorThread, NULL);
     chThdCreateStatic(MotorPIDThreadWorkingArea, sizeof(MotorPIDThreadWorkingArea), NORMALPRIO, MotorPIDThread, NULL);
     chThdCreateStatic(GPS_UART_ThreadWorkingArea, sizeof(GPS_UART_ThreadWorkingArea), NORMALPRIO, GPS_UART_Thread, NULL);
     chThdCreateStatic(Battery_Management_ThreadWorkingArea, sizeof(Battery_Management_ThreadWorkingArea), NORMALPRIO, Battery_Management_Thread, NULL);
